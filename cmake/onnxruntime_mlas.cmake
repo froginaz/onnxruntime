@@ -761,10 +761,29 @@ else()
           ${MLAS_SRC_DIR}/rotary_embedding_kernel_avx2.cpp
         )
         if(CMAKE_CXX_COMPILER_VERSION GREATER_EQUAL 13.1 AND NOT(APPLE))
-          set(mlas_platform_srcs_avx2
-            ${mlas_platform_srcs_avx2}
-            ${MLAS_SRC_DIR}/x86_64/cvtfp16Avx.S
+          # Check if the assembler supports AVX-NE-CONVERT instructions (vcvtneeph2ps)
+          include(CheckCXXSourceCompiles)
+          set(CMAKE_REQUIRED_FLAGS "-mavxneconvert")
+          check_cxx_source_compiles("
+            #include <immintrin.h>
+            int main() {
+              float f[8] = {};
+              __m256 r = _mm256_cvtneeph_ps((__m256h*)f);
+              (void)r;
+              return 0;
+            }"
+            HAS_AVXNECONVERT
           )
+          unset(CMAKE_REQUIRED_FLAGS)
+          if(HAS_AVXNECONVERT)
+            set(mlas_platform_srcs_avx2
+              ${mlas_platform_srcs_avx2}
+              ${MLAS_SRC_DIR}/x86_64/cvtfp16Avx.S
+            )
+            target_compile_definitions(onnxruntime_mlas PRIVATE MLAS_HAS_AVXNECONVERT)
+          else()
+            message(STATUS "Skipping cvtfp16Avx.S (AVX-NE-CONVERT not supported by assembler)")
+          endif()
         endif()
 
         set(CMAKE_REQUIRED_FLAGS "-mavx2 -mfma -mf16c -mavxvnni")

@@ -523,14 +523,14 @@ Return Value:
                 }
 
 #ifndef __APPLE__
-#if (defined(_MSC_VER) && (_MSC_VER >= 1933)) || (defined(__GNUC__) && (__GNUC__ >= 13))
+#if (defined(_MSC_VER) && (_MSC_VER >= 1933)) || defined(MLAS_HAS_AVXNECONVERT)
                 //
                 // Check if the processor supports AVX NE CONVERT.
                 //
                 if ((Cpuid7_1[3] & (0b1 << 5)) != 0) {
                     this->CastF16ToF32Kernel = &MlasCastF16ToF32KernelAvx;
                 }
-#endif  // (defined(_MSC_VER) && (_MSC_VER >= 1933)) || (defined(__GNUC__) && (__GNUC__ >= 13))
+#endif  // (defined(_MSC_VER) && (_MSC_VER >= 1933)) || defined(MLAS_HAS_AVXNECONVERT)
 
 
                 //
