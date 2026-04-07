@@ -16,9 +16,7 @@ if (NOT CMAKE_C_STANDARD)
   set(CMAKE_C_STANDARD 99)
 endif()
 
-if (NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 20)
-endif()
+set(CMAKE_CXX_STANDARD 20)
 
 # We don't use C++20 modules yet.
 # There are some known issues to address first:
