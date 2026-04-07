@@ -767,7 +767,7 @@ else()
           )
         endif()
 
-        set(CMAKE_REQUIRED_FLAGS "-mavxvnni")
+        set(CMAKE_REQUIRED_FLAGS "-mavx2 -mfma -mf16c -mavxvnni")
         check_cxx_source_compiles("
           #include <immintrin.h>
           int main() {
@@ -784,8 +784,9 @@ else()
           message(STATUS "Using -mavx2 -mfma -mavxvnni flags")
           set_source_files_properties(${mlas_platform_srcs_avx2} PROPERTIES COMPILE_FLAGS "-mavx2 -mfma -mf16c -mavxvnni")
         else()
-          message(STATUS "Using -mavx2 -mfma flags (assembler does not support AVX-VNNI)")
+          message(STATUS "Using -mavx2 -mfma flags (AVX-VNNI not available)")
           set_source_files_properties(${mlas_platform_srcs_avx2} PROPERTIES COMPILE_FLAGS "-mavx2 -mfma -mf16c")
+          set_source_files_properties(${mlas_platform_srcs_avx2} PROPERTIES COMPILE_DEFINITIONS "MLAS_AVXVNNI_UNSUPPORTED")
         endif()
         set(mlas_platform_srcs_avx512f
           ${MLAS_SRC_DIR}/x86_64/DgemmKernelAvx512F.S
