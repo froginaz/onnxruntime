@@ -231,6 +231,12 @@ function(setup_mlas_source_for_windows)
       ${MLAS_SRC_DIR}/sqnbitgemm_kernel_avx512.cpp
       ${MLAS_SRC_DIR}/sqnbitgemm_kernel_avx512vnni.cpp
       ${MLAS_SRC_DIR}/amd64/QgemmU8S8KernelAmx.asm
+    )
+
+    set_source_files_properties(${MLAS_SRC_DIR}/sqnbitgemm_kernel_avx512.cpp PROPERTIES COMPILE_FLAGS "/arch:AVX512")
+    set_source_files_properties(${MLAS_SRC_DIR}/sqnbitgemm_kernel_avx512vnni.cpp PROPERTIES COMPILE_FLAGS "/arch:AVX512")
+
+    target_sources(onnxruntime_mlas PRIVATE
       ${MLAS_SRC_DIR}/amd64/QgemmU8S8KernelAvx2.asm
       ${MLAS_SRC_DIR}/amd64/QgemmU8U8KernelAvx2.asm
       ${MLAS_SRC_DIR}/amd64/QgemmU8X8KernelAvx2.asm
@@ -282,6 +288,7 @@ function(setup_mlas_source_for_windows)
       target_sources(onnxruntime_mlas PRIVATE
         ${MLAS_SRC_DIR}/q4gemm_avx512.cpp
       )
+      set_source_files_properties(${MLAS_SRC_DIR}/q4gemm_avx512.cpp PROPERTIES COMPILE_FLAGS "/arch:AVX512")
     endif()
   else()
     target_sources(onnxruntime_mlas PRIVATE
