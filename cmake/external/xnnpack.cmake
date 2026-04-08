@@ -21,6 +21,24 @@ if(NOT HAS_AVX512FP16)
   set(XNNPACK_ENABLE_AVX512FP16 OFF CACHE INTERNAL "")
 endif()
 
+# Disable AVX-VNNI microkernels if the assembler cannot handle vpdpbusd (requires binutils >= 2.36).
+set(CMAKE_REQUIRED_FLAGS "-mavxvnni")
+check_cxx_source_compiles("
+  #include <immintrin.h>
+  int main() {
+    __m256i a = _mm256_setzero_si256();
+    __m256i c = _mm256_dpbusd_avx_epi32(a, a, a);
+    (void)c;
+    return 0;
+  }"
+  XNNPACK_HAS_AVXVNNI
+)
+unset(CMAKE_REQUIRED_FLAGS)
+if(NOT XNNPACK_HAS_AVXVNNI)
+  message(STATUS "Disabling XNNPACK AVXVNNI (not supported by toolchain)")
+  set(XNNPACK_ENABLE_AVXVNNI OFF CACHE INTERNAL "")
+endif()
+
 set(PTHREADPOOL_BUILD_TESTS OFF CACHE INTERNAL "")
 set(PTHREADPOOL_BUILD_BENCHMARKS OFF CACHE INTERNAL "")
 set(KLEIDIAI_BUILD_TESTS OFF CACHE INTERNAL "")
