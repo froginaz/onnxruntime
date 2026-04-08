@@ -2,6 +2,25 @@ set(XNNPACK_USE_SYSTEM_LIBS ON CACHE INTERNAL "")
 set(XNNPACK_BUILD_TESTS OFF CACHE INTERNAL "")
 set(XNNPACK_BUILD_BENCHMARKS OFF CACHE INTERNAL "")
 
+# Disable AVX512 FP16 microkernels if the assembler cannot handle them (requires binutils >= 2.38).
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_FLAGS "-mavx512fp16")
+check_cxx_source_compiles("
+  #include <immintrin.h>
+  int main() {
+    __m512h a = _mm512_setzero_ph();
+    __m512h b = _mm512_max_ph(a, a);
+    (void)b;
+    return 0;
+  }"
+  HAS_AVX512FP16
+)
+unset(CMAKE_REQUIRED_FLAGS)
+if(NOT HAS_AVX512FP16)
+  message(STATUS "Disabling XNNPACK AVX512FP16 (not supported by toolchain)")
+  set(XNNPACK_ENABLE_AVX512FP16 OFF CACHE INTERNAL "")
+endif()
+
 set(PTHREADPOOL_BUILD_TESTS OFF CACHE INTERNAL "")
 set(PTHREADPOOL_BUILD_BENCHMARKS OFF CACHE INTERNAL "")
 set(KLEIDIAI_BUILD_TESTS OFF CACHE INTERNAL "")
