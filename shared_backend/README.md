@@ -5,6 +5,9 @@ onnxruntime and llama.cpp through each framework's native loadable-backend ABI.
 There is no single common ABI between the two projects, so we use a 3-layer
 design: one shared core + two thin adapter DLLs.
 
+> Architecture rationale, class/sequence diagrams, and how to port a new ML
+> runtime: [`docs/design.md`](docs/design.md).
+
 ```
                          ┌──────────────────────────────┐
                          │  myaccel_core (static/shared) │  framework-agnostic
