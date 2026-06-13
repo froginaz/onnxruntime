@@ -1,0 +1,269 @@
+'==============================================================================
+' MyAccel shared NPU backend — design diagrams (PlantUML)
+'
+' One file, multiple named diagrams. Render all:
+'   plantuml shared_backend/docs/design.puml
+' Render one (by @startuml name), e.g.:
+'   plantuml -tsvg design.puml   ' produces design_<name>.svg per block
+'
+' Mirrors docs/design.md.
+'==============================================================================
+
+'------------------------------------------------------------------------------
+' 1. Architecture overview — one NPU core, many front-ends
+'------------------------------------------------------------------------------
+@startuml architecture_overview
+title MyAccel — layered architecture (one NPU, many runtimes)
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "ML runtimes (front-ends)" {
+  [onnxruntime\n(.onnx)] as ORT
+  [llama.cpp\n(.gguf)] as LLAMA
+  [future runtime\n(ExecuTorch / TVM / TFLite ...)] as FUTURE
+}
+
+package "Thin adapters (per-framework ABI)" {
+  [myaccel_ort_ep.dll\nOrtEpFactory / OrtEp] as EP
+  [ggml-myaccel.dll\nggml_backend_reg] as GG
+  [future adapter\n(framework backend iface)] as FA
+}
+
+package "myaccel_core — framework-agnostic" {
+  [npu_model.h\n(pure C ABI: load nnc + weights)] as NPUMODEL
+  [npu_core.h\n(device / memory / kernels)] as NPUCORE
+  [NPU SW stack / driver] as SDK
+}
+
+ORT --> EP
+LLAMA --> GG
+FUTURE ..> FA
+EP --> NPUMODEL
+GG --> NPUMODEL
+FA ..> NPUMODEL
+NPUMODEL --> NPUCORE
+NPUCORE --> SDK
+
+note right of NPUMODEL
+  Boundary: nothing below this point
+  knows about .onnx / .gguf / OrtEp / ggml.
+  Adapters convert their container into the
+  NPU's own {model.nnc, weight.bin}.
+end note
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 2. Class diagram
+'------------------------------------------------------------------------------
+@startuml class_diagram
+title MyAccel — class / interface structure
+skinparam shadowing false
+skinparam linetype ortho
+
+'==== onnxruntime adapter ====
+interface OrtEpFactory <<ORT interface>> {
+  +GetName()
+  +GetSupportedDevices()
+  +CreateEp()
+  +ReleaseEp()
+}
+interface OrtEp <<ORT interface>> {
+  +GetCapability()
+  +Compile()
+  +Sync()
+}
+class MyAccelEpFactory {
+  -ep_name_
+  -vendor_id_
+  +GetSupportedDevicesImpl()
+  +CreateEpImpl()
+}
+class MyAccelEp {
+  -npu_device* device_
+  +GetCapabilityImpl()
+  +CompileImpl() : calls npu_model_load
+}
+OrtEpFactory <|.. MyAccelEpFactory
+OrtEp <|.. MyAccelEp
+MyAccelEpFactory ..> MyAccelEp : creates
+
+'==== llama.cpp adapter ====
+interface ggml_backend_reg_i <<ggml vtable>> {
+  +get_device_count()
+  +get_device()
+}
+interface ggml_backend_device_i <<ggml vtable>> {
+  +get_buffer_type()
+  +init_backend()
+  +supports_op()
+}
+interface ggml_backend_i <<ggml vtable>> {
+  +graph_compute()
+}
+class GgmlMyAccelAdapter {
+  +ggml_backend_myaccel_reg()
+  +ggml_backend_init()
+  +backend_graph_compute() : calls core kernels
+}
+ggml_backend_reg_i <|.. GgmlMyAccelAdapter
+ggml_backend_device_i <|.. GgmlMyAccelAdapter
+ggml_backend_i <|.. GgmlMyAccelAdapter
+
+'==== shared core: model-loading C ABI ====
+class "npu_model.h" as NpuModel <<C ABI stable>> {
+  +npu_model_load(device, info) : npu_model*
+  +npu_model_compile(device, nnc) : npu_model*
+  +npu_model_bind_weights(model, weights)
+  +npu_model_num_inputs()
+  +npu_model_get_input()
+  +npu_model_free()
+}
+class npu_model_load_info_t <<struct>> {
+  +uint32 struct_size
+  +uint32 api_version
+  +npu_blob_t nnc
+  +npu_blob_t weights
+  +npu_weight_manifest_t* manifest
+  +npu_weight_residency_t residency
+}
+class npu_blob_t <<struct>> {
+  +npu_source_kind_t kind
+  +union {MEMORY|FILE|FD|CALLBACK}
+}
+NpuModel ..> npu_model_load_info_t : consumes
+npu_model_load_info_t *-- npu_blob_t
+
+'==== shared core: device / memory / kernels ====
+class "npu_core.h" as NpuCore <<C++ convenience>> {
+  +OpenDevice() / CloseDevice()
+  +Alloc() / Free() / Copy()
+  +CreateStream() / Synchronize()
+  +MatMulF32()
+}
+
+'==== cross-layer dependencies (one-way, downward) ====
+MyAccelEp ..> NpuModel : load model
+MyAccelEp ..> NpuCore : memory / kernels
+GgmlMyAccelAdapter ..> NpuModel : load model
+GgmlMyAccelAdapter ..> NpuCore : memory / kernels
+NpuModel ..> NpuCore : device handle
+
+note bottom of NpuCore
+  Core has NO edges back up to the adapters.
+  Strict one-way dependency = reusable core.
+end note
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 3. Sequence — loading a model (onnxruntime path, copy-to-device)
+'------------------------------------------------------------------------------
+@startuml seq_load_ort
+title Model load — onnxruntime path (COPY_TO_DEVICE)
+autonumber
+skinparam shadowing false
+
+actor App
+participant "onnxruntime" as ORT
+participant "MyAccelEp(Factory)" as EP
+participant "npu_model.h\n(C ABI)" as API
+participant "myaccel_core / NPU" as Core
+
+App -> ORT : RegisterExecutionProviderLibrary("myaccel", dll)
+ORT -> EP : CreateEpFactories(api_base, logger)
+ORT -> EP : GetSupportedDevices(hw_devices)
+EP --> ORT : OrtEpDevice (NPU matched by vendor id)
+App -> ORT : create session(model.onnx, EP=myaccel)
+ORT -> EP : GetCapability(graph)
+EP --> ORT : fused nodes the NPU supports
+ORT -> EP : Compile(fused subgraph)
+note over EP
+  extract topology  -> model.nnc
+  gather initializers -> weight.bin
+end note
+EP -> API : npu_model_load(device, {nnc, weights, COPY_TO_DEVICE})
+API -> Core : compile nnc + DMA weights to device
+Core --> API : npu_model*
+API --> EP : npu_model*
+EP --> ORT : OrtNodeComputeInfo (holds npu_model*)
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 4. Sequence — loading a model (llama.cpp path, zero-copy mmap)
+'------------------------------------------------------------------------------
+@startuml seq_load_llama
+title Model load — llama.cpp path (REFERENCE_HOST, zero-copy)
+autonumber
+skinparam shadowing false
+
+actor "llama-cli" as App
+participant "ggml runtime" as GG
+participant "ggml-myaccel" as AD
+participant "npu_model.h\n(C ABI)" as API
+participant "myaccel_core / NPU" as Core
+
+App -> GG : ggml_backend_load("ggml-myaccel.dll")
+GG -> AD : ggml_backend_init()
+AD --> GG : ggml_backend_reg (api_version checked)
+App -> GG : enumerate devices / select "myaccel_npu"
+note over App : gguf is mmap'd; weights already in host memory
+App -> AD : build graph -> load tensors
+AD -> API : npu_model_load(device, {nnc, weights=mmap_ptr, REFERENCE_HOST})
+API -> Core : compile nnc; reference host weights (no copy)
+Core --> API : npu_model*
+API --> AD : npu_model*  (npu_model_owns_weights()==0)
+note over AD : gguf mapping MUST stay alive for model lifetime
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 5. Sequence — inference dispatch (ggml scheduler)
+'------------------------------------------------------------------------------
+@startuml seq_infer_ggml
+title Inference dispatch (ggml)
+autonumber
+skinparam shadowing false
+
+participant "ggml_backend_sched" as Sched
+participant "ggml-myaccel" as AD
+participant "myaccel_core / NPU" as Core
+
+Sched -> AD : supports_op(node)?
+AD --> Sched : true for offloaded ops, false otherwise
+Sched -> AD : graph_compute(cgraph)
+loop each node
+  AD -> Core : MatMulF32 / kernel(src, dst)
+  Core --> AD : status
+end
+AD --> Sched : GGML_STATUS_SUCCESS / FAILED(->CPU fallback)
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 6. Sequence — porting a NEW runtime (generic 5-step adapter contract)
+'------------------------------------------------------------------------------
+@startuml seq_port_new_runtime
+title Porting a new ML runtime — the only code you write is the adapter
+autonumber
+skinparam shadowing false
+
+participant "New runtime" as RT
+participant "NEW adapter\n(you write this)" as ADP
+participant "npu_model.h\n(unchanged)" as API
+participant "myaccel_core\n(unchanged)" as Core
+
+RT -> ADP : 1. register device (framework's backend registry)
+RT -> ADP : load model(container)
+ADP -> ADP : 2. convert container -> model.nnc + weight.bin
+ADP -> API : 3. npu_model_load(device, info{source kind, residency})
+API -> Core : compile + bind weights
+Core --> API : npu_model*
+API --> ADP : npu_model*
+ADP -> API : 4. npu_model_get_input/output  (bind I/O)
+RT -> ADP : run(activations)
+ADP -> Core : 5. dispatch kernels
+Core --> ADP : outputs
+ADP --> RT : results
+@enduml
