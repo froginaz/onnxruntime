@@ -115,8 +115,9 @@ class "npu_model.h" as NpuModel <<C ABI stable>> {
   +npu_model_load(device, info) : npu_model*
   +npu_model_compile(device, nnc) : npu_model*
   +npu_model_bind_weights(model, weights)
-  +npu_model_num_inputs()
-  +npu_model_get_input()
+  +npu_model_owns_weights(model)
+  +npu_model_num_inputs() / num_outputs()
+  +npu_model_get_input() / get_output()
   +npu_model_free()
 }
 class npu_model_load_info_t <<struct>> {
@@ -164,29 +165,33 @@ title Model load — onnxruntime path (COPY_TO_DEVICE)
 autonumber
 skinparam shadowing false
 
-actor App
+actor User
 participant "onnxruntime" as ORT
-participant "MyAccelEp(Factory)" as EP
-participant "npu_model.h\n(C ABI)" as API
-participant "myaccel_core / NPU" as Core
+participant MyAccelEpFactory as Factory
+participant MyAccelEp as EP
+participant "npu_model.h" as NpuModel
+participant "npu_core.h" as NpuCore
 
-App -> ORT : RegisterExecutionProviderLibrary("myaccel", dll)
-ORT -> EP : CreateEpFactories(api_base, logger)
-ORT -> EP : GetSupportedDevices(hw_devices)
-EP --> ORT : OrtEpDevice (NPU matched by vendor id)
-App -> ORT : create session(model.onnx, EP=myaccel)
-ORT -> EP : GetCapability(graph)
+User -> ORT : RegisterExecutionProviderLibrary("myaccel", dll)
+note over Factory : DLL entry CreateEpFactories() constructs MyAccelEpFactory
+ORT -> Factory : GetSupportedDevicesImpl(hw_devices)
+Factory --> ORT : OrtEpDevice (NPU matched by vendor id)
+User -> ORT : create session(model.onnx, EP=myaccel)
+ORT -> Factory : CreateEpImpl()
+Factory -> EP : new MyAccelEp(device)
+ORT -> EP : GetCapabilityImpl(graph)
 EP --> ORT : fused nodes the NPU supports
-ORT -> EP : Compile(fused subgraph)
+ORT -> EP : CompileImpl(fused subgraph)
 note over EP
-  extract topology  -> model.nnc
+  extract topology   -> model.nnc
   gather initializers -> weight.bin
 end note
-EP -> API : npu_model_load(device, {nnc, weights, COPY_TO_DEVICE})
-API -> Core : compile nnc + DMA weights to device
-Core --> API : npu_model*
-API --> EP : npu_model*
+EP -> NpuModel : npu_model_load(device, {nnc, weights, COPY_TO_DEVICE})
+NpuModel -> NpuCore : OpenDevice() ; Alloc() ; Copy() weights to device
+NpuCore --> NpuModel : ok
+NpuModel --> EP : npu_model*
 EP --> ORT : OrtNodeComputeInfo (holds npu_model*)
+ORT --> User : session ready
 @enduml
 
 
@@ -198,23 +203,27 @@ title Model load — llama.cpp path (REFERENCE_HOST, zero-copy)
 autonumber
 skinparam shadowing false
 
-actor "llama-cli" as App
-participant "ggml runtime" as GG
-participant "ggml-myaccel" as AD
-participant "npu_model.h\n(C ABI)" as API
-participant "myaccel_core / NPU" as Core
+actor User
+participant "llama runtime (ggml)" as GGML
+participant GgmlMyAccelAdapter as AD
+participant "npu_model.h" as NpuModel
+participant "npu_core.h" as NpuCore
 
-App -> GG : ggml_backend_load("ggml-myaccel.dll")
-GG -> AD : ggml_backend_init()
-AD --> GG : ggml_backend_reg (api_version checked)
-App -> GG : enumerate devices / select "myaccel_npu"
-note over App : gguf is mmap'd; weights already in host memory
-App -> AD : build graph -> load tensors
-AD -> API : npu_model_load(device, {nnc, weights=mmap_ptr, REFERENCE_HOST})
-API -> Core : compile nnc; reference host weights (no copy)
-Core --> API : npu_model*
-API --> AD : npu_model*  (npu_model_owns_weights()==0)
+User -> GGML : llama-cli ... (GGML_BACKEND_PATH=ggml-myaccel.dll)
+GGML -> AD : ggml_backend_init()
+AD --> GGML : ggml_backend_reg (api_version checked)
+User -> GGML : load model.gguf, select "myaccel_npu"
+GGML -> AD : get_device_count() / get_device()
+GGML -> AD : init_backend()
+note over AD : gguf is mmap'd; extract nnc + weights (no copy)
+AD -> NpuModel : npu_model_load(device, {nnc, weights=mmap_ptr, REFERENCE_HOST})
+NpuModel -> NpuCore : OpenDevice() ; reference host weights
+NpuCore --> NpuModel : ok
+NpuModel --> AD : npu_model*
+AD -> NpuModel : npu_model_owns_weights() -> 0
 note over AD : gguf mapping MUST stay alive for model lifetime
+AD --> GGML : backend ready
+GGML --> User : model loaded
 @enduml
 
 
@@ -226,18 +235,22 @@ title Inference dispatch (ggml)
 autonumber
 skinparam shadowing false
 
-participant "ggml_backend_sched" as Sched
-participant "ggml-myaccel" as AD
-participant "myaccel_core / NPU" as Core
+actor User
+participant "llama runtime (ggml sched)" as Sched
+participant GgmlMyAccelAdapter as AD
+participant "npu_core.h" as NpuCore
 
+User -> Sched : generate / eval prompt
 Sched -> AD : supports_op(node)?
 AD --> Sched : true for offloaded ops, false otherwise
 Sched -> AD : graph_compute(cgraph)
+note over AD : vtable graph_compute -> backend_graph_compute()
 loop each node
-  AD -> Core : MatMulF32 / kernel(src, dst)
-  Core --> AD : status
+  AD -> NpuCore : MatMulF32(src, dst)
+  NpuCore --> AD : status
 end
 AD --> Sched : GGML_STATUS_SUCCESS / FAILED(->CPU fallback)
+Sched --> User : output tokens
 @enduml
 
 
@@ -249,21 +262,25 @@ title Porting a new ML runtime — the only code you write is the adapter
 autonumber
 skinparam shadowing false
 
+actor User
 participant "New runtime" as RT
-participant "NEW adapter\n(you write this)" as ADP
-participant "npu_model.h\n(unchanged)" as API
-participant "myaccel_core\n(unchanged)" as Core
+participant "NEW adapter (you write this)" as ADP
+participant "npu_model.h" as NpuModel
+participant "npu_core.h" as NpuCore
 
+User -> RT : load model + run
 RT -> ADP : 1. register device (framework's backend registry)
 RT -> ADP : load model(container)
 ADP -> ADP : 2. convert container -> model.nnc + weight.bin
-ADP -> API : 3. npu_model_load(device, info{source kind, residency})
-API -> Core : compile + bind weights
-Core --> API : npu_model*
-API --> ADP : npu_model*
-ADP -> API : 4. npu_model_get_input/output  (bind I/O)
-RT -> ADP : run(activations)
-ADP -> Core : 5. dispatch kernels
-Core --> ADP : outputs
+ADP -> NpuModel : 3. npu_model_load(device, info{source kind, residency})
+NpuModel -> NpuCore : OpenDevice() ; Alloc() ; Copy()
+NpuCore --> NpuModel : ok
+NpuModel --> ADP : npu_model*
+ADP -> NpuModel : 4. npu_model_get_input() / get_output()  (bind I/O)
+User -> RT : run(activations)
+RT -> ADP : execute
+ADP -> NpuCore : 5. MatMulF32() / kernels
+NpuCore --> ADP : outputs
 ADP --> RT : results
+RT --> User : results
 @enduml

@@ -130,8 +130,9 @@ classDiagram
         +npu_model_load(device, info) npu_model_ptr
         +npu_model_compile(device, nnc) npu_model_ptr
         +npu_model_bind_weights(model, weights)
-        +npu_model_num_inputs()
-        +npu_model_get_input()
+        +npu_model_owns_weights(model)
+        +npu_model_num_inputs() num_outputs()
+        +npu_model_get_input() get_output()
         +npu_model_free()
     }
     class npu_model_load_info_t {
@@ -179,26 +180,30 @@ up — a strict one-way dependency, which is what makes the core reusable.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant App as App
+    actor User
     participant ORT as onnxruntime
-    participant EP as MyAccelEp(Factory)
-    participant API as npu_model.h (C ABI)
-    participant Core as myaccel_core / NPU
+    participant Factory as MyAccelEpFactory
+    participant EP as MyAccelEp
+    participant NpuModel as npu_model.h
+    participant NpuCore as npu_core.h
 
-    App->>ORT: RegisterExecutionProviderLibrary("myaccel", dll)
-    ORT->>EP: CreateEpFactories(api_base, logger)
-    ORT->>EP: GetSupportedDevices(hw_devices)
-    EP-->>ORT: OrtEpDevice (NPU matched by vendor id)
-    App->>ORT: create session(model.onnx, EP=myaccel)
-    ORT->>EP: GetCapability(graph)
+    User->>ORT: RegisterExecutionProviderLibrary("myaccel", dll)
+    Note over Factory: DLL entry CreateEpFactories() constructs MyAccelEpFactory
+    ORT->>Factory: GetSupportedDevicesImpl(hw_devices)
+    Factory-->>ORT: OrtEpDevice (NPU matched by vendor id)
+    User->>ORT: create session(model.onnx, EP=myaccel)
+    ORT->>Factory: CreateEpImpl()
+    Factory->>EP: new MyAccelEp(device)
+    ORT->>EP: GetCapabilityImpl(graph)
     EP-->>ORT: fused nodes the NPU supports
-    ORT->>EP: Compile(fused subgraph)
+    ORT->>EP: CompileImpl(fused subgraph)
     Note over EP: extract topology -> model.nnc<br/>gather initializers -> weight.bin
-    EP->>API: npu_model_load(device, {nnc, weights, COPY_TO_DEVICE})
-    API->>Core: compile nnc + DMA weights to device
-    Core-->>API: npu_model*
-    API-->>EP: npu_model*
+    EP->>NpuModel: npu_model_load(device, {nnc, weights, COPY_TO_DEVICE})
+    NpuModel->>NpuCore: OpenDevice(); Alloc(); Copy() weights
+    NpuCore-->>NpuModel: ok
+    NpuModel-->>EP: npu_model*
     EP-->>ORT: OrtNodeComputeInfo (holds npu_model*)
+    ORT-->>User: session ready
 ```
 
 ### 4.2 Loading a model — llama.cpp path (zero-copy weights)
@@ -206,23 +211,27 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant App as llama-cli
-    participant GG as ggml runtime
-    participant AD as ggml-myaccel
-    participant API as npu_model.h (C ABI)
-    participant Core as myaccel_core / NPU
+    actor User
+    participant GGML as llama runtime (ggml)
+    participant AD as GgmlMyAccelAdapter
+    participant NpuModel as npu_model.h
+    participant NpuCore as npu_core.h
 
-    App->>GG: ggml_backend_load("ggml-myaccel.dll")
-    GG->>AD: ggml_backend_init()
-    AD-->>GG: ggml_backend_reg (api_version checked)
-    App->>GG: enumerate devices / select "myaccel_npu"
-    Note over App: gguf is mmap'd; weights already in host memory
-    App->>AD: build graph -> load tensors
-    AD->>API: npu_model_load(device, {nnc, weights=mmap_ptr, REFERENCE_HOST})
-    API->>Core: compile nnc; reference host weights (no copy)
-    Core-->>API: npu_model*
-    API-->>AD: npu_model* (npu_model_owns_weights()==0)
-    Note over AD: gguf mapping must stay alive for model lifetime
+    User->>GGML: llama-cli ... (GGML_BACKEND_PATH=ggml-myaccel.dll)
+    GGML->>AD: ggml_backend_init()
+    AD-->>GGML: ggml_backend_reg (api_version checked)
+    User->>GGML: load model.gguf, select "myaccel_npu"
+    GGML->>AD: get_device_count() / get_device()
+    GGML->>AD: init_backend()
+    Note over AD: gguf is mmap'd; extract nnc + weights (no copy)
+    AD->>NpuModel: npu_model_load(device, {nnc, weights=mmap_ptr, REFERENCE_HOST})
+    NpuModel->>NpuCore: OpenDevice(); reference host weights
+    NpuCore-->>NpuModel: ok
+    NpuModel-->>AD: npu_model*
+    AD->>NpuModel: npu_model_owns_weights() -> 0
+    Note over AD: gguf mapping MUST stay alive for model lifetime
+    AD-->>GGML: backend ready
+    GGML-->>User: model loaded
 ```
 
 Same `npu_model_load`, two different weight-delivery strategies — absorbed by
@@ -233,18 +242,22 @@ Same `npu_model_load`, two different weight-delivery strategies — absorbed by
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Sched as ggml_backend_sched
-    participant AD as ggml-myaccel
-    participant Core as myaccel_core / NPU
+    actor User
+    participant Sched as llama runtime (ggml sched)
+    participant AD as GgmlMyAccelAdapter
+    participant NpuCore as npu_core.h
 
+    User->>Sched: generate / eval prompt
     Sched->>AD: supports_op(node)?
     AD-->>Sched: true for offloaded ops, false otherwise
     Sched->>AD: graph_compute(cgraph)
+    Note over AD: vtable graph_compute -> backend_graph_compute()
     loop each node
-        AD->>Core: MatMulF32 / kernel(src, dst)
-        Core-->>AD: status
+        AD->>NpuCore: MatMulF32(src, dst)
+        NpuCore-->>AD: status
     end
     AD-->>Sched: GGML_STATUS_SUCCESS / FAILED(->CPU fallback)
+    Sched-->>User: output tokens
 ```
 
 ---
