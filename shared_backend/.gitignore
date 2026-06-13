@@ -1,0 +1,6 @@
+# Build output
+build/
+
+# PlantUML / diagram render artifacts (regenerated from docs/*.puml)
+docs/*.png
+docs/*.svg
