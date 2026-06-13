@@ -23,12 +23,16 @@ option(MYACCEL_BUILD_GGML   "Build the llama.cpp ggml backend adapter" ON)
 option(MYACCEL_CORE_SHARED  "Build the NPU core as a shared library"   OFF)
 
 # --- shared, framework-agnostic core --------------------------------------
+set(MYACCEL_CORE_SOURCES
+    core/src/npu_core.cpp     # device / memory / kernels (C++ convenience API)
+    core/src/npu_model.cpp)   # model-loading C ABI (npu_model.h)
+
 if(MYACCEL_CORE_SHARED)
-    add_library(myaccel_core SHARED core/src/npu_core.cpp)
+    add_library(myaccel_core SHARED ${MYACCEL_CORE_SOURCES})
     target_compile_definitions(myaccel_core PRIVATE MYACCEL_CORE_BUILD_DLL)
     target_compile_definitions(myaccel_core PUBLIC MYACCEL_CORE_USE_DLL)
 else()
-    add_library(myaccel_core STATIC core/src/npu_core.cpp)
+    add_library(myaccel_core STATIC ${MYACCEL_CORE_SOURCES})
 endif()
 target_include_directories(myaccel_core PUBLIC core/include)
 

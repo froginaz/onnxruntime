@@ -24,8 +24,13 @@ design: one shared core + two thin adapter DLLs.
 | Path | Role |
 |------|------|
 | `core/` | NPU SDK abstraction. The only shared code. **No framework types.** |
+| `core/include/myaccel/npu_model.h` | **Model-loading C ABI** both runtimes call — see [`docs/npu_model_api.md`](docs/npu_model_api.md). |
 | `ort_ep/` | onnxruntime plugin Execution Provider adapter. |
 | `ggml_backend/` | llama.cpp ggml backend adapter. |
+
+Two complementary core APIs:
+- `npu_core.h` — C++ convenience layer for device/memory/kernels (used by the adapters internally).
+- `npu_model.h` — **pure C ABI** for loading `model.nnc` + `weight.bin` onto the NPU. This is the stable runtime↔NPU boundary; it knows nothing about onnx/gguf.
 
 ## Build on Windows (CMake)
 
