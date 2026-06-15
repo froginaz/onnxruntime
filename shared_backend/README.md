@@ -6,7 +6,9 @@ single common ABI across these projects, so we use a 3-layer design: one shared
 core + one thin adapter per runtime (onnxruntime, llama.cpp, ExecuTorch).
 
 > Architecture rationale, class/sequence diagrams, and how to port a new ML
-> runtime: [`docs/design.md`](docs/design.md).
+> runtime: [`docs/design.md`](docs/design.md). Why a common backend API at all
+> (background, necessity, significance — academic):
+> [`docs/rationale_common_backend_api.md`](docs/rationale_common_backend_api.md).
 
 ```
                   ┌────────────────────────────────────┐
