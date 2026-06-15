@@ -1,0 +1,73 @@
+'==============================================================================
+' executorch_integration.md — visualized (PlantUML)
+'   plantuml shared_backend/docs/executorch_integration.puml
+'==============================================================================
+
+'------------------------------------------------------------------------------
+' 1. AOT + runtime overview — how a model reaches MyAccelBackend
+'------------------------------------------------------------------------------
+@startuml et_delegation_overview
+title ExecuTorch delegation: AOT export -> .pte -> runtime
+skinparam shadowing false
+
+|AOT (Python, export time)|
+start
+:torch.export(model);
+:to_edge(...) -> EdgeProgramManager;
+:to_backend(MyAccelPartitioner());
+note right
+  Partitioner tags NPU-friendly subgraphs with
+  DelegationSpec("MyAccelBackend", compile_specs)
+end note
+:MyAccelBackend.preprocess()\ncompiles subgraph -> NPU program bytes\n(model.nnc + weight.bin);
+:to_executorch() embeds the blob\nas a delegate payload in the .pte;
+:write model.pte;
+
+|Runtime (C++, on device)|
+:load model.pte (Program / Module);
+:runtime hits a delegate call ->\nMyAccelBackend (registered by id);
+:init(processed = delegate blob) ->\nnpu_model_load();
+:execute(handle, args) -> run on NPU;
+:destroy(handle);
+stop
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 2. Runtime sequence — register / init / execute / destroy
+'------------------------------------------------------------------------------
+@startuml et_runtime_sequence
+title ExecuTorch runtime: MyAccelBackend lifecycle
+autonumber
+skinparam shadowing false
+
+actor User
+participant "host app" as APP
+participant "executorch runtime" as ETRT
+participant "myaccel_backend.dll\n(MyAccelBackend)" as ETB
+participant "npu_model.h / myaccel::npu" as API
+participant "myaccel_core" as CORE
+
+User -> APP : run inference(model.pte, inputs)
+note over ETB : load -> static init OR myaccel_backend_register()\nregister_backend("MyAccelBackend")
+APP -> ETRT : load Program(model.pte)
+ETRT -> ETB : init(BackendInitContext, processed=delegate blob, compile_specs)
+ETB -> API : npu_model_load(device, {nnc+weights from blob, COPY_TO_DEVICE})
+API -> CORE : compile + bind weights
+CORE --> API : npu_model*
+API --> ETB : npu_model*
+ETB --> ETRT : DelegateHandle* (holds npu_model*)
+User -> APP : forward(inputs)
+APP -> ETRT : execute method
+ETRT -> ETB : execute(ctx, handle, EValue** args)
+ETB -> API : bind I/O (npu_model_get_input/output) ; run
+API -> CORE : dispatch kernels
+CORE --> API : outputs
+API --> ETB : ok
+ETB --> ETRT : Error::Ok
+ETRT --> APP : outputs
+APP --> User : results
+... session end ...
+ETRT -> ETB : destroy(handle)
+ETB -> API : npu_model_free()
+@enduml

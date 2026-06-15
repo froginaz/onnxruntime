@@ -34,7 +34,7 @@ core + one thin adapter per runtime (onnxruntime, llama.cpp, ExecuTorch).
 | `core/internal/myaccel/` | Internal `npu_core.h` / `npu_memory.h` (PRIVATE; wrapped by the façade). |
 | `ort_ep/` | onnxruntime plugin Execution Provider adapter (-> `myaccel_ort_ep.dll`). |
 | `ggml_backend/` | llama.cpp ggml backend adapter (-> `ggml-myaccel.dll`) — using it from llama.cpp: [`docs/llama_integration.md`](docs/llama_integration.md). |
-| `executorch/` | ExecuTorch backend adapter (-> `myaccel_backend.dll`), references `myaccel_core`. Opt-in: `-DMYACCEL_BUILD_EXECUTORCH=ON -DEXECUTORCH_DIR=...`. |
+| `executorch/` | ExecuTorch backend adapter (-> `myaccel_backend.dll`), references `myaccel_core`. Guide: [`docs/executorch_integration.md`](docs/executorch_integration.md). Opt-in: `-DMYACCEL_BUILD_EXECUTORCH=ON -DEXECUTORCH_DIR=...`. |
 
 Public NPU access — the adapters include only these:
 - `npu_api.h` — **public façade** (namespace `myaccel::npu`) for device/memory/kernels. The single NPU access point for every adapter.
@@ -107,7 +107,8 @@ backend search path); `ggml_backend_load_all()` discovers it at startup. Details
 **ExecuTorch**: link/load `myaccel_backend.dll` so its `register_backend("MyAccelBackend")`
 runs (static init on load, or call the exported `myaccel_backend_register()`).
 At export time, partition the NPU subgraphs to the `MyAccelBackend` so they are
-delegated in the `.pte`.
+delegated in the `.pte`. Full AOT + runtime walkthrough:
+[`docs/executorch_integration.md`](docs/executorch_integration.md).
 
 > If the core is built as a separate DLL (`-DMYACCEL_CORE_SHARED=ON`), ship
 > `myaccel_core.dll` next to each adapter DLL — they all reference it.
