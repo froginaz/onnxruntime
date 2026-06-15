@@ -11,13 +11,13 @@
 #include <string>
 
 #include "ep_common.h"
-#include "myaccel/npu_core.h"
+#include "myaccel/npu_api.h"  // sole NPU access point (myaccel::npu)
 
 class ExampleEpFactory;
 
 class MyAccelEp : public OrtEp, public ApiPtrs {
  public:
-  MyAccelEp(const std::string& name, ApiPtrs apis, myaccel::Device* device, const OrtLogger& logger);
+  MyAccelEp(const std::string& name, ApiPtrs apis, myaccel::npu::Device* device, const OrtLogger& logger);
   ~MyAccelEp();
 
   const std::string& name() const { return name_; }
@@ -40,7 +40,7 @@ class MyAccelEp : public OrtEp, public ApiPtrs {
   static OrtStatus* ORT_API_CALL SyncImpl(OrtEp* this_ptr) noexcept;
 
   std::string name_;
-  myaccel::Device* device_ = nullptr;
+  myaccel::npu::Device* device_ = nullptr;
   const OrtLogger& logger_;
 };
 

@@ -19,7 +19,7 @@
 #include <cstring>
 #include <vector>
 
-#include "myaccel/npu_core.h"
+#include "myaccel/npu_api.h"  // sole NPU access point (myaccel::npu)
 
 // ---------------------------------------------------------------------------
 // Buffer
@@ -27,38 +27,38 @@
 namespace {
 
 struct MyAccelBufferCtx {
-  myaccel::Device* device = nullptr;
-  myaccel::Buffer* buffer = nullptr;
+  myaccel::npu::Device* device = nullptr;
+  myaccel::npu::Buffer* buffer = nullptr;
 };
 
 void buffer_free(ggml_backend_buffer_t buffer) {
   auto* ctx = static_cast<MyAccelBufferCtx*>(buffer->context);
-  myaccel::Free(ctx->buffer);
+  myaccel::npu::Free(ctx->buffer);
   delete ctx;
 }
 
 void* buffer_get_base(ggml_backend_buffer_t buffer) {
   auto* ctx = static_cast<MyAccelBufferCtx*>(buffer->context);
-  return myaccel::DevicePtr(ctx->buffer);
+  return myaccel::npu::DevicePtr(ctx->buffer);
 }
 
 void buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor* tensor,
                        const void* data, size_t offset, size_t size) {
   auto* ctx = static_cast<MyAccelBufferCtx*>(buffer->context);
-  myaccel::Copy(ctx->device, static_cast<char*>(tensor->data) + offset, data, size,
-                myaccel::CopyKind::kHostToDevice);
+  myaccel::npu::Copy(ctx->device, static_cast<char*>(tensor->data) + offset, data, size,
+                myaccel::npu::CopyKind::kHostToDevice);
 }
 
 void buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor* tensor,
                        void* data, size_t offset, size_t size) {
   auto* ctx = static_cast<MyAccelBufferCtx*>(buffer->context);
-  myaccel::Copy(ctx->device, data, static_cast<const char*>(tensor->data) + offset, size,
-                myaccel::CopyKind::kDeviceToHost);
+  myaccel::npu::Copy(ctx->device, data, static_cast<const char*>(tensor->data) + offset, size,
+                myaccel::npu::CopyKind::kDeviceToHost);
 }
 
 void buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
   auto* ctx = static_cast<MyAccelBufferCtx*>(buffer->context);
-  void* base = myaccel::DevicePtr(ctx->buffer);
+  void* base = myaccel::npu::DevicePtr(ctx->buffer);
   std::memset(base, value, ggml_backend_buffer_get_size(buffer));  // stub: host-visible memory
 }
 
@@ -77,11 +77,11 @@ constexpr ggml_backend_buffer_i kBufferIface = {
 // ---------------------------------------------------------------------------
 // Buffer type
 // ---------------------------------------------------------------------------
-const char* buft_get_name(ggml_backend_buffer_type_t /*buft*/) { return myaccel::kBackendName; }
+const char* buft_get_name(ggml_backend_buffer_type_t /*buft*/) { return myaccel::npu::kBackendName; }
 
 ggml_backend_buffer_t buft_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
-  auto* device = static_cast<myaccel::Device*>(buft->device->context);
-  auto* ctx = new MyAccelBufferCtx{device, myaccel::Alloc(device, size)};
+  auto* device = static_cast<myaccel::npu::Device*>(buft->device->context);
+  auto* ctx = new MyAccelBufferCtx{device, myaccel::npu::Alloc(device, size)};
   if (ctx->buffer == nullptr) {
     delete ctx;
     return nullptr;
@@ -94,12 +94,12 @@ size_t buft_get_alignment(ggml_backend_buffer_type_t /*buft*/) { return 256; }  
 // ---------------------------------------------------------------------------
 // Backend
 // ---------------------------------------------------------------------------
-const char* backend_get_name(ggml_backend_t /*backend*/) { return myaccel::kBackendName; }
+const char* backend_get_name(ggml_backend_t /*backend*/) { return myaccel::npu::kBackendName; }
 
 void backend_free(ggml_backend_t backend) { delete backend; }
 
 ggml_status backend_graph_compute(ggml_backend_t backend, ggml_cgraph* cgraph) {
-  auto* device = static_cast<myaccel::Device*>(backend->device->context);
+  auto* device = static_cast<myaccel::npu::Device*>(backend->device->context);
   for (int i = 0; i < cgraph->n_nodes; ++i) {
     ggml_tensor* node = cgraph->nodes[i];
     switch (node->op) {
@@ -117,7 +117,7 @@ ggml_status backend_graph_compute(ggml_backend_t backend, ggml_cgraph* cgraph) {
         const int64_t k = src0->ne[0];
         const int64_t m = src1->ne[1];
         const int64_t n = src0->ne[1];
-        myaccel::MatMulF32(device, nullptr, src1->data, src0->data, node->data, m, k, n);
+        myaccel::npu::MatMulF32(device, nullptr, src1->data, src0->data, node->data, m, k, n);
         break;
       }
       default:
@@ -148,12 +148,12 @@ constexpr ggml_backend_i kBackendIface = {
 // ---------------------------------------------------------------------------
 // Device
 // ---------------------------------------------------------------------------
-const char* device_get_name(ggml_backend_dev_t /*dev*/) { return myaccel::kBackendName; }
+const char* device_get_name(ggml_backend_dev_t /*dev*/) { return myaccel::npu::kBackendName; }
 const char* device_get_description(ggml_backend_dev_t /*dev*/) { return "MyAccel NPU"; }
 
 void device_get_memory(ggml_backend_dev_t /*dev*/, size_t* free, size_t* total) {
-  myaccel::DeviceInfo info{};
-  myaccel::GetDeviceInfo(0, &info);
+  myaccel::npu::DeviceInfo info{};
+  myaccel::npu::GetDeviceInfo(0, &info);
   *total = static_cast<size_t>(info.total_memory);
   *free = *total;  // TODO: query live free memory
 }
@@ -225,22 +225,22 @@ constexpr ggml_backend_device_i kDeviceIface = {
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
-const char* reg_get_name(ggml_backend_reg_t /*reg*/) { return myaccel::kBackendName; }
+const char* reg_get_name(ggml_backend_reg_t /*reg*/) { return myaccel::npu::kBackendName; }
 
 size_t reg_get_device_count(ggml_backend_reg_t /*reg*/) {
-  myaccel::Initialize();
-  return static_cast<size_t>(myaccel::GetDeviceCount());
+  myaccel::npu::Initialize();
+  return static_cast<size_t>(myaccel::npu::GetDeviceCount());
 }
 
 ggml_backend_dev_t reg_get_device(ggml_backend_reg_t reg, size_t index) {
   static std::vector<ggml_backend_device> devices;
-  static std::vector<myaccel::Device*> handles;
+  static std::vector<myaccel::npu::Device*> handles;
   if (devices.empty()) {
-    const int count = myaccel::GetDeviceCount();
+    const int count = myaccel::npu::GetDeviceCount();
     devices.resize(count);
     handles.resize(count);
     for (int i = 0; i < count; ++i) {
-      handles[i] = myaccel::OpenDevice(i);
+      handles[i] = myaccel::npu::OpenDevice(i);
       devices[i] = ggml_backend_device{/* .iface = */ kDeviceIface, /* .reg = */ reg,
                                        /* .context = */ handles[i]};
     }

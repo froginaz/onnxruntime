@@ -3,9 +3,9 @@
 #include "ep_factory.h"
 
 #include "ep.h"
-#include "myaccel/npu_core.h"
+#include "myaccel/npu_api.h"  // sole NPU access point (myaccel::npu)
 
-const char* MyAccelEpFactory::myaccel_vendor_name() { return myaccel::kVendorName; }
+const char* MyAccelEpFactory::myaccel_vendor_name() { return myaccel::npu::kVendorName; }
 
 MyAccelEpFactory::MyAccelEpFactory(const char* registration_name, ApiPtrs apis, const OrtLogger& default_logger)
     : OrtEpFactory{}, ApiPtrs(apis), ep_name_(registration_name), default_logger_(default_logger) {
@@ -22,7 +22,7 @@ MyAccelEpFactory::MyAccelEpFactory(const char* registration_name, ApiPtrs apis, 
   // null until GetCapability starts fusing nodes (which is when ORT needs to
   // move tensors to the device). Fill them in following ORT's example EP.
 
-  myaccel::Initialize();
+  myaccel::npu::Initialize();
 }
 
 const char* ORT_API_CALL MyAccelEpFactory::GetNameImpl(const OrtEpFactory* this_ptr) noexcept {
@@ -77,7 +77,7 @@ OrtStatus* ORT_API_CALL MyAccelEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
   auto* factory = static_cast<MyAccelEpFactory*>(this_ptr);
 
   // TODO: pick the device index from the matched OrtHardwareDevice. Stub uses 0.
-  myaccel::Device* device = myaccel::OpenDevice(0);
+  myaccel::npu::Device* device = myaccel::npu::OpenDevice(0);
   if (device == nullptr) {
     return factory->ort_api.CreateStatus(ORT_EP_FAIL, "MyAccel: failed to open NPU device");
   }

@@ -4,7 +4,7 @@
 // hidden via exports.def / the version script.
 
 #include "ep_factory.h"
-#include "myaccel/npu_core.h"
+#include "myaccel/npu_api.h"  // sole NPU access point (myaccel::npu)
 
 #ifdef __APPLE__
 #define EXPORT_SYMBOL __attribute__((visibility("default")))
@@ -33,7 +33,7 @@ EXPORT_SYMBOL OrtStatus* CreateEpFactories(const char* registration_name, const 
 
 EXPORT_SYMBOL OrtStatus* ReleaseEpFactory(OrtEpFactory* factory) {
   delete static_cast<MyAccelEpFactory*>(factory);
-  myaccel::Shutdown();
+  myaccel::npu::Shutdown();
   return nullptr;
 }
 

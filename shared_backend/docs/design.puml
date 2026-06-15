@@ -31,7 +31,7 @@ package "Thin adapters (per-framework ABI)" {
 
 package "myaccel_core — framework-agnostic" {
   [npu_model.h\n(pure C ABI: load nnc + weights)] as NPUMODEL
-  [npu_core.h\n(device / memory / kernels)] as NPUCORE
+  [npu_api.h (public façade)\n(device / memory / kernels)] as NPUCORE
   [NPU SW stack / driver] as SDK
 }
 
@@ -136,7 +136,7 @@ NpuModel ..> npu_model_load_info_t : consumes
 npu_model_load_info_t *-- npu_blob_t
 
 '==== shared core: device / memory / kernels ====
-class "npu_core.h" as NpuCore <<C++ convenience>> {
+class "npu_api.h" as NpuCore <<public façade>> {
   +OpenDevice() / CloseDevice()
   +Alloc() / Free() / Copy()
   +CreateStream() / Synchronize()
@@ -170,7 +170,7 @@ participant "onnxruntime" as ORT
 participant MyAccelEpFactory as Factory
 participant MyAccelEp as EP
 participant "npu_model.h" as NpuModel
-participant "npu_core.h" as NpuCore
+participant "npu_api.h" as NpuCore
 
 User -> ORT : RegisterExecutionProviderLibrary("myaccel", dll)
 note over Factory : DLL entry CreateEpFactories() constructs MyAccelEpFactory
@@ -207,7 +207,7 @@ actor User
 participant "llama runtime (ggml)" as GGML
 participant GgmlMyAccelAdapter as AD
 participant "npu_model.h" as NpuModel
-participant "npu_core.h" as NpuCore
+participant "npu_api.h" as NpuCore
 
 User -> GGML : llama-cli ... (GGML_BACKEND_PATH=ggml-myaccel.dll)
 GGML -> AD : ggml_backend_init()
@@ -238,7 +238,7 @@ skinparam shadowing false
 actor User
 participant "llama runtime (ggml sched)" as Sched
 participant GgmlMyAccelAdapter as AD
-participant "npu_core.h" as NpuCore
+participant "npu_api.h" as NpuCore
 
 User -> Sched : generate / eval prompt
 Sched -> AD : supports_op(node)?
@@ -266,7 +266,7 @@ actor User
 participant "New runtime" as RT
 participant "NEW adapter (you write this)" as ADP
 participant "npu_model.h" as NpuModel
-participant "npu_core.h" as NpuCore
+participant "npu_api.h" as NpuCore
 
 User -> RT : load model + run
 RT -> ADP : 1. register device (framework's backend registry)

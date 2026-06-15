@@ -9,7 +9,7 @@
 
 Header-only. Used **only** inside the core `.cpp` files (e.g. parsing the
 `options_json` load option). It is added to `myaccel_core` as a `PRIVATE` include
-and is never exposed through the public headers (`npu_model.h` / `npu_core.h`),
+and is never exposed through the public headers (`npu_model.h` / `npu_api.h`),
 so it does not leak into the adapters or the DLL export surface.
 
 To update: replace `nlohmann/json.hpp` with a newer single-header release and

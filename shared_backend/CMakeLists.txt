@@ -30,7 +30,8 @@ option(MYACCEL_CORE_SHARED  "Build the NPU core as a shared library"   OFF)
 
 # --- shared, framework-agnostic core --------------------------------------
 set(MYACCEL_CORE_SOURCES
-    core/src/npu_core.cpp     # device / memory / kernels (C++ convenience API)
+    core/src/npu_core.cpp     # internal: device / memory / kernels (stub SDK)
+    core/src/npu_api.cpp      # public façade myaccel::npu (npu_api.h)
     core/src/npu_model.cpp)   # model-loading C ABI (npu_model.h)
 
 if(MYACCEL_CORE_SHARED)
@@ -51,7 +52,12 @@ else()
     add_library(myaccel_core STATIC ${MYACCEL_CORE_SOURCES})
     message(STATUS "myaccel_core: STATIC -> linked into each adapter DLL")
 endif()
-target_include_directories(myaccel_core PUBLIC core/include)
+# PUBLIC: the façade (npu_api.h) + model C ABI (npu_model.h) only.
+# PRIVATE: the internal npu_core / npu_memory headers — adapters that link
+# myaccel_core inherit PUBLIC but NOT PRIVATE, so they can reach the NPU only
+# through myaccel::npu in npu_api.h.
+target_include_directories(myaccel_core PUBLIC  core/include)
+target_include_directories(myaccel_core PRIVATE core/internal)
 
 # nlohmann/json (header-only, vendored single header in third_party/).
 # PRIVATE: json is an implementation detail of the core .cpp files only — it is

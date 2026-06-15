@@ -1,7 +1,7 @@
 # Test plan — MyAccel shared NPU backend
 
 Scope: the 3-layer architecture in `shared_backend/` — the framework-agnostic
-**core** (`npu_core.h`, `npu_model.h`), the **onnxruntime plugin-EP** adapter,
+**core** (`npu_api.h` façade + internal `npu_core`/`npu_memory`, `npu_model.h`), the **onnxruntime plugin-EP** adapter,
 and the **llama.cpp ggml** adapter — plus the cross-cutting guarantees that
 make "one NPU, two runtimes" actually hold.
 
@@ -28,7 +28,7 @@ make "one NPU, two runtimes" actually hold.
 
 | Level | Target | Tool | Where it runs |
 |---|---|---|---|
-| Unit | `npu_core` / `npu_model` C/C++ functions | GoogleTest | host, mock NPU |
+| Unit | `npu_api` façade + `npu_model` C/C++ functions | GoogleTest | host, mock NPU |
 | Component | each adapter against a fake host | GoogleTest + ORT C API harness; ggml `test-backend-ops` | host, mock NPU |
 | Integration | adapter + real ORT / real llama.cpp | ORT `onnxruntime_test_all`, `llama-cli`, pytest | host |
 | System / E2E | full inference of a real model | pytest (ORT) / `llama-cli` prompt | host + HW |
@@ -44,7 +44,7 @@ a deterministic CPU answer even before silicon exists.
 
 ## 3. Unit tests — core
 
-### 3.1 Device / memory (`npu_core.h`)
+### 3.1 Device / memory (`npu_api.h` façade)
 - U-CORE-01 `Initialize`/`Shutdown` are refcounted: N inits need N shutdowns; real teardown only on last.
 - U-CORE-02 `GetDeviceCount` ≥ 0; `GetDeviceInfo` rejects out-of-range id (`kInvalidArgument`).
 - U-CORE-03 `OpenDevice`/`CloseDevice` round-trip; open invalid id → nullptr.

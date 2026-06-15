@@ -2,7 +2,7 @@
 
 #include "ep.h"
 
-MyAccelEp::MyAccelEp(const std::string& name, ApiPtrs apis, myaccel::Device* device, const OrtLogger& logger)
+MyAccelEp::MyAccelEp(const std::string& name, ApiPtrs apis, myaccel::npu::Device* device, const OrtLogger& logger)
     : OrtEp{}, ApiPtrs(apis), name_(name), device_(device), logger_(logger) {
   ort_version_supported = ORT_API_VERSION;  // compiled-against ORT version
 
@@ -18,7 +18,7 @@ MyAccelEp::MyAccelEp(const std::string& name, ApiPtrs apis, myaccel::Device* dev
 }
 
 MyAccelEp::~MyAccelEp() {
-  if (device_ != nullptr) myaccel::CloseDevice(device_);
+  if (device_ != nullptr) myaccel::npu::CloseDevice(device_);
 }
 
 const char* ORT_API_CALL MyAccelEp::GetNameImpl(const OrtEp* this_ptr) noexcept {
@@ -40,7 +40,7 @@ OrtStatus* ORT_API_CALL MyAccelEp::CompileImpl(OrtEp* /*this_ptr*/, const OrtGra
                                                OrtNode** /*ep_context_nodes*/) noexcept {
   // Never reached while GetCapability fuses nothing. Once you fuse nodes, build
   // an OrtNodeComputeInfo per fused node whose Compute() reads inputs, calls
-  // myaccel::MatMulF32 / your kernels, and writes outputs.
+  // myaccel::npu::MatMulF32 / your kernels, and writes outputs.
   return nullptr;
 }
 
@@ -52,7 +52,7 @@ void ORT_API_CALL MyAccelEp::ReleaseNodeComputeInfosImpl(OrtEp* /*this_ptr*/,
 
 OrtStatus* ORT_API_CALL MyAccelEp::SyncImpl(OrtEp* this_ptr) noexcept {
   auto* ep = static_cast<MyAccelEp*>(this_ptr);
-  myaccel::Synchronize(nullptr);  // sync the whole device for the stub
+  myaccel::npu::Synchronize(nullptr);  // sync the whole device for the stub
   (void)ep;
   return nullptr;
 }

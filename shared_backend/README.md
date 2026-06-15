@@ -27,13 +27,19 @@ design: one shared core + two thin adapter DLLs.
 | Path | Role |
 |------|------|
 | `core/` | NPU SDK abstraction. The only shared code. **No framework types.** |
+| `core/include/myaccel/npu_api.h` | **Public façade** (`myaccel::npu`) — the adapters' sole NPU access point. |
 | `core/include/myaccel/npu_model.h` | **Model-loading C ABI** both runtimes call — see [`docs/npu_model_api.md`](docs/npu_model_api.md). |
+| `core/internal/myaccel/` | Internal `npu_core.h` / `npu_memory.h` (PRIVATE; wrapped by the façade). |
 | `ort_ep/` | onnxruntime plugin Execution Provider adapter. |
 | `ggml_backend/` | llama.cpp ggml backend adapter — using it from llama.cpp: [`docs/llama_integration.md`](docs/llama_integration.md). |
 
-Two complementary core APIs:
-- `npu_core.h` — C++ convenience layer for device/memory/kernels (used by the adapters internally).
-- `npu_model.h` — **pure C ABI** for loading `model.nnc` + `weight.bin` onto the NPU. This is the stable runtime↔NPU boundary; it knows nothing about onnx/gguf.
+Public NPU access — the adapters include only these:
+- `npu_api.h` — **public façade** (namespace `myaccel::npu`) for device/memory/kernels. The single NPU access point for both adapters.
+- `npu_model.h` — **pure C ABI** for loading `model.nnc` + `weight.bin` onto the NPU. The stable runtime↔NPU boundary; it knows nothing about onnx/gguf.
+
+Internal (under `core/internal/`, a PRIVATE include not on the adapters' path; wrapped by `npu_api.h` and hidden from the DLL exports):
+- `npu_core.h` — device, compute, streams, kernels (raw SDK calls).
+- `npu_memory.h` — device allocation and host↔device copies.
 
 ## Build on Windows (CMake)
 

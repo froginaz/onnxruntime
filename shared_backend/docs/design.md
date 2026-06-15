@@ -33,7 +33,7 @@ flowchart TB
 
     subgraph Core["myaccel_core — framework-agnostic"]
         NPUMODEL["npu_model.h<br/>(pure C ABI: load nnc + weights)"]
-        NPUCORE["npu_core.h<br/>(device / memory / kernels)"]
+        NPUCORE["npu_api.h (façade)<br/>(device / memory / kernels)"]
         SDK["NPU SW stack / driver"]
     end
 
@@ -43,7 +43,7 @@ flowchart TB
     NPUMODEL --> NPUCORE --> SDK
 ```
 
-**Key boundary:** everything below `npu_model.h` / `npu_core.h` knows nothing
+**Key boundary:** everything below `npu_model.h` / `npu_api.h` knows nothing
 about `.onnx`, `.gguf`, `OrtEp`, or `ggml`. Each adapter converts its container
 into the NPU's own `{model.nnc, weight.bin}` and calls the same C ABI.
 
@@ -56,13 +56,17 @@ into the NPU's own `{model.nnc, weight.bin}` and calls the same C ABI.
 | Front-end | onnxruntime, llama.cpp, … | the model container (.onnx/.gguf) | n/a (external) |
 | **Adapter** | `ort_ep/`, `ggml_backend/` | *one* framework ABI **and** the NPU C ABI | follows framework |
 | **NPU model ABI** | `core/include/myaccel/npu_model.h` | `model.nnc` + `weight.bin` only | **pure C, versioned** |
-| **NPU core** | `core/include/myaccel/npu_core.h` + impl | device/memory/kernels | C++ convenience |
+| **NPU public façade** | `core/include/myaccel/npu_api.h` (`myaccel::npu`) | device/memory/kernels | exported C++ |
+| **NPU internals** | `core/internal/myaccel/npu_core.h`, `npu_memory.h` | raw SDK calls | hidden, wrapped |
 | HW | NPU SW stack / driver | silicon | vendor |
 
-The two core headers play different roles:
-- `npu_model.h` — the **public, stable C ABI** every adapter calls (loading).
-- `npu_core.h` — internal C++ convenience for device/memory/kernels used by the
-  adapters and by the model-API implementation.
+The public surface vs internals:
+- `npu_api.h` — the **public façade** (namespace `myaccel::npu`) every adapter
+  calls for device/memory/kernels. The **single NPU access point**.
+- `npu_model.h` — the **public, stable C ABI** for model loading.
+- `npu_core.h` / `npu_memory.h` — **internal** (under `core/internal/`, a PRIVATE
+  include not on the adapters' path); wrapped by `npu_api.h` and hidden from the
+  DLL export surface.
 
 ---
 
@@ -151,8 +155,8 @@ classDiagram
     npu_model_load_info_t *-- npu_blob_t
 
     %% ---------- shared core: device/memory/kernels ----------
-    class npu_core_h {
-        <<C++ convenience>>
+    class npu_api_h {
+        <<public façade>>
         +OpenDevice() / CloseDevice()
         +Alloc() / Free() / Copy()
         +CreateStream() / Synchronize()
@@ -161,15 +165,17 @@ classDiagram
 
     %% ---------- dependencies ----------
     MyAccelEp ..> npu_model_h : load model
-    MyAccelEp ..> npu_core_h : memory / kernels
+    MyAccelEp ..> npu_api_h : memory / kernels
     GgmlMyAccelAdapter ..> npu_model_h : load model
-    GgmlMyAccelAdapter ..> npu_core_h : memory / kernels
-    npu_model_h ..> npu_core_h : device handle
+    GgmlMyAccelAdapter ..> npu_api_h : memory / kernels
+    npu_model_h ..> npu_api_h : device handle
 ```
 
 The adapters **inherit / implement their framework's interface** (left side) and
-**depend on the same two core headers** (bottom). The core has zero edges back
-up — a strict one-way dependency, which is what makes the core reusable.
+**depend only on the public headers** `npu_api.h` + `npu_model.h` (bottom); the
+internal `npu_core`/`npu_memory` are wrapped by the façade and out of reach. The
+core has zero edges back up — a strict one-way dependency, which is what makes
+the core reusable.
 
 ---
 
@@ -185,7 +191,7 @@ sequenceDiagram
     participant Factory as MyAccelEpFactory
     participant EP as MyAccelEp
     participant NpuModel as npu_model.h
-    participant NpuCore as npu_core.h
+    participant NpuCore as npu_api.h
 
     User->>ORT: RegisterExecutionProviderLibrary("myaccel", dll)
     Note over Factory: DLL entry CreateEpFactories() constructs MyAccelEpFactory
@@ -215,7 +221,7 @@ sequenceDiagram
     participant GGML as llama runtime (ggml)
     participant AD as GgmlMyAccelAdapter
     participant NpuModel as npu_model.h
-    participant NpuCore as npu_core.h
+    participant NpuCore as npu_api.h
 
     User->>GGML: llama-cli ... (GGML_BACKEND_PATH=ggml-myaccel.dll)
     GGML->>AD: ggml_backend_init()
@@ -245,7 +251,7 @@ sequenceDiagram
     actor User
     participant Sched as llama runtime (ggml sched)
     participant AD as GgmlMyAccelAdapter
-    participant NpuCore as npu_core.h
+    participant NpuCore as npu_api.h
 
     User->>Sched: generate / eval prompt
     Sched->>AD: supports_op(node)?
@@ -305,7 +311,7 @@ Every adapter follows the **same 5-step contract**, regardless of framework:
 | 2. Convert | Extract/convert the runtime's model → `model.nnc` + `weight.bin` | adapter-local |
 | 3. Load | Fill `npu_model_load_info_t`, choose source kind + residency | `npu_model_load` |
 | 4. Bind I/O | Map framework tensors to `npu_model_get_input/output` | `npu_model.h` |
-| 5. Dispatch | On each run, feed activations, run, read outputs | `npu_core.h` |
+| 5. Dispatch | On each run, feed activations, run, read outputs | `npu_api.h` |
 
 Concretely, the extension point in each ecosystem:
 
@@ -331,9 +337,11 @@ memory management, weight-delivery options, and parity test harness.
 ```
 shared_backend/
 ├─ core/
-│  ├─ include/myaccel/npu_core.h    device / memory / kernels (C++)
+│  ├─ include/myaccel/npu_api.h     PUBLIC façade (myaccel::npu) — adapters' sole entry
 │  ├─ include/myaccel/npu_model.h   model-loading C ABI  (stable boundary)
-│  └─ src/                          reference / stub impl
+│  ├─ internal/myaccel/npu_core.h   INTERNAL device / compute (not on adapter path)
+│  ├─ internal/myaccel/npu_memory.h INTERNAL allocation
+│  └─ src/                          reference / stub impl + façade forwarding
 ├─ ort_ep/                          onnxruntime adapter  (-> myaccel_ort_ep.dll)
 ├─ ggml_backend/                    llama.cpp adapter    (-> ggml-myaccel.dll)
 └─ docs/
