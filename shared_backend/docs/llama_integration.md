@@ -119,6 +119,50 @@ flowchart TD
 > `OrtApi` passed into `CreateEpFactories`. See `npu_model_api.md` /
 > `design.md` for the ORT-side details.
 
+### All three runtimes (+ ExecuTorch)
+
+A third adapter, `myaccel_backend.dll` (the ExecuTorch backend in
+`shared_backend/executorch/`), references the **same** `myaccel_core` as the EP
+and ggml adapters. ExecuTorch registers the backend by name
+(`register_backend("MyAccelBackend")`) — via static init on load, or the
+exported `myaccel_backend_register()`.
+
+```mermaid
+flowchart TD
+    subgraph ORTP["onnxruntime path"]
+        APPO["host app (uses onnxruntime)"]
+        ORT["onnxruntime.dll"]
+        EP["myaccel_ort_ep.dll"]
+    end
+    subgraph LLP["llama.cpp path"]
+        EXE["llama-cli.exe"]
+        BASE["ggml-base.dll"]
+        MY["ggml-myaccel.dll"]
+    end
+    subgraph ETP["ExecuTorch path"]
+        APPE["host app (uses ExecuTorch)"]
+        ETRT["executorch runtime"]
+        ETB["myaccel_backend.dll"]
+    end
+    CORE["myaccel_core.dll<br/>(separate when MYACCEL_CORE_SHARED=ON,<br/>shared by all three adapters)"]
+    SDK["NPU SW stack / driver"]
+
+    APPO -.->|"implicit link"| ORT
+    ORT ==>|"EXPLICIT runtime load — CreateEpFactories"| EP
+    EP -.->|"implicit link — co-located"| CORE
+    EXE -.->|"implicit link"| BASE
+    EXE ==>|"EXPLICIT runtime load — ggml_backend_init"| MY
+    MY -.->|"implicit link — co-located"| BASE
+    MY -.->|"implicit link — co-located"| CORE
+    APPE -.->|"implicit link"| ETRT
+    ETRT ==>|"register_backend(MyAccelBackend) — static init / myaccel_backend_register()"| ETB
+    ETB -.->|"implicit link — co-located"| CORE
+    CORE -.->|"link/load NPU driver"| SDK
+```
+
+> `myaccel_backend.dll` references `myaccel_core.dll` — the same core the EP and
+> ggml adapters use. Build with `-DMYACCEL_BUILD_EXECUTORCH=ON -DEXECUTORCH_DIR=...`.
+
 ### Building the core as a separate DLL
 
 ```bat

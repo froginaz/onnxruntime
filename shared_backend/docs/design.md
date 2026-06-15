@@ -319,7 +319,7 @@ Concretely, the extension point in each ecosystem:
 |---|---|---|
 | **onnxruntime** | plugin Execution Provider (`OrtEpFactory`/`OrtEp`) | ✅ `ort_ep/` |
 | **llama.cpp** | ggml-backend registry (`ggml_backend_reg`) | ✅ `ggml_backend/` |
-| ExecuTorch | `BackendInterface` delegate (`init`/`execute`/`destroy`) | recipe above |
+| **ExecuTorch** | `BackendInterface` delegate (`init`/`execute`/`destroy`) | ✅ `executorch/` |
 | Apache TVM | BYOC + runtime `Module` | recipe above |
 | TFLite | `TfLiteDelegate` | recipe above |
 | OpenVINO | plugin / remote context | recipe above |

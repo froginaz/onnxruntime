@@ -1,8 +1,8 @@
 # MyAccel shared HW-accelerator backend for onnxruntime + llama.cpp.
 #
-#   onnxruntime  --(plugin EP ABI)-->  myaccel_ort_ep.dll  --+
-#                                                            +--> myaccel_core (NPU SDK)
-#   llama.cpp    --(ggml backend ABI)-> ggml-myaccel.dll   --+
+#   onnxruntime  --(plugin EP ABI)----> myaccel_ort_ep.dll  --+
+#   llama.cpp    --(ggml backend ABI)-> ggml-myaccel.dll    --+--> myaccel_core (NPU SDK)
+#   ExecuTorch   --(BackendInterface)-> myaccel_backend.dll --+
 #
 # Configure examples (Windows, x64 Native Tools prompt):
 #   cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DORT_HOME=C:/ort -DLLAMA_CPP_DIR=C:/llama.cpp
@@ -26,6 +26,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(MYACCEL_BUILD_ORT_EP "Build the onnxruntime plugin-EP adapter" ON)
 option(MYACCEL_BUILD_GGML   "Build the llama.cpp ggml backend adapter" ON)
+option(MYACCEL_BUILD_EXECUTORCH "Build the ExecuTorch backend adapter" OFF)
 option(MYACCEL_CORE_SHARED  "Build the NPU core as a shared library"   OFF)
 
 # --- shared, framework-agnostic core --------------------------------------
@@ -75,4 +76,7 @@ if(MYACCEL_BUILD_ORT_EP)
 endif()
 if(MYACCEL_BUILD_GGML)
     add_subdirectory(ggml_backend)
+endif()
+if(MYACCEL_BUILD_EXECUTORCH)
+    add_subdirectory(executorch)  # -> myaccel_backend.dll, references myaccel_core
 endif()

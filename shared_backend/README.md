@@ -30,8 +30,9 @@ design: one shared core + two thin adapter DLLs.
 | `core/include/myaccel/npu_api.h` | **Public façade** (`myaccel::npu`) — the adapters' sole NPU access point. |
 | `core/include/myaccel/npu_model.h` | **Model-loading C ABI** both runtimes call — see [`docs/npu_model_api.md`](docs/npu_model_api.md). |
 | `core/internal/myaccel/` | Internal `npu_core.h` / `npu_memory.h` (PRIVATE; wrapped by the façade). |
-| `ort_ep/` | onnxruntime plugin Execution Provider adapter. |
-| `ggml_backend/` | llama.cpp ggml backend adapter — using it from llama.cpp: [`docs/llama_integration.md`](docs/llama_integration.md). |
+| `ort_ep/` | onnxruntime plugin Execution Provider adapter (-> `myaccel_ort_ep.dll`). |
+| `ggml_backend/` | llama.cpp ggml backend adapter (-> `ggml-myaccel.dll`) — using it from llama.cpp: [`docs/llama_integration.md`](docs/llama_integration.md). |
+| `executorch/` | ExecuTorch backend adapter (-> `myaccel_backend.dll`), references `myaccel_core`. Opt-in: `-DMYACCEL_BUILD_EXECUTORCH=ON -DEXECUTORCH_DIR=...`. |
 
 Public NPU access — the adapters include only these:
 - `npu_api.h` — **public façade** (namespace `myaccel::npu`) for device/memory/kernels. The single NPU access point for both adapters.

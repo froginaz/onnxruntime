@@ -177,3 +177,56 @@ note bottom of CORE
   both adapters. Default (OFF): static-linked into each.
 end note
 @enduml
+
+
+'------------------------------------------------------------------------------
+' 6. Linking & loading — onnxruntime + llama.cpp + ExecuTorch (share myaccel_core)
+'------------------------------------------------------------------------------
+@startuml linking_overview_all
+title Linking & loading: 3 runtimes, one shared myaccel_core
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "onnxruntime path" {
+  [host app\n(uses onnxruntime)] as APPO
+  [onnxruntime.dll] as ORT
+  [myaccel_ort_ep.dll] as EP
+}
+package "llama.cpp path" {
+  [llama-cli.exe] as EXE
+  [ggml-base.dll] as BASE
+  [ggml-myaccel.dll] as MY
+}
+package "ExecuTorch path" {
+  [host app\n(uses ExecuTorch)] as APPE
+  [executorch runtime] as ETRT
+  [myaccel_backend.dll] as ETB
+}
+[myaccel_core.dll] as CORE
+[NPU SW stack / driver] as SDK
+
+APPO ..> ORT   : implicit link
+ORT  ..> EP    : EXPLICIT runtime load\nRegisterExecutionProviderLibrary ->\nGetProcAddress("CreateEpFactories")
+EP   ..> CORE  : implicit link (co-located)
+
+EXE  ..> BASE  : implicit link
+EXE  ..> MY    : EXPLICIT runtime load\nggml_backend_load ->\ndlsym("ggml_backend_init")
+MY   ..> BASE  : implicit link (co-located)
+MY   ..> CORE  : implicit link (co-located)
+
+APPE ..> ETRT  : implicit link
+ETRT ..> ETB   : register_backend("MyAccelBackend")\n(static init on load, or\nmyaccel_backend_register())
+ETB  ..> CORE  : implicit link (co-located)
+
+CORE ..> SDK   : link / load NPU driver
+
+note bottom of CORE
+  Separate DLL with MYACCEL_CORE_SHARED=ON, shared by all three
+  adapters. Default (OFF): static-linked into each adapter.
+end note
+
+note bottom of ETB
+  myaccel_backend.dll references myaccel_core.dll
+  (the same core the EP and ggml adapters use).
+end note
+@enduml
