@@ -31,6 +31,124 @@ the load is refused).
 
 ---
 
+## Linking the executable to the DLL
+
+A program reaches a DLL in one of two ways — and ggml uses **both**, for
+different libraries:
+
+| | Implicit (load-time / static) linking | Explicit (run-time) loading |
+|---|---|---|
+| Resolved | at **build**, loaded by the OS at process **startup** | program calls `LoadLibrary` / `dlopen` at **runtime** |
+| Needs | the import library (`.lib` on Windows / the `.so`) at link time | nothing at build; just the path at runtime |
+| If missing | the exe **fails to start** | handled gracefully (returns null) |
+| Used by | `llama-cli.exe` → `ggml-base.dll`; `ggml-myaccel.dll` → `ggml-base.dll` | `llama-cli` → `ggml-myaccel.dll` (a backend) |
+
+Consequences for this backend:
+
+- **The executable does NOT link `ggml-myaccel.dll`.** ggml backends are loaded
+  explicitly at runtime via `ggml_backend_load`, so the backend never appears in
+  llama-cli's linker inputs. A new NPU build = drop in a DLL, no host rebuild.
+- **`ggml-myaccel.dll` *does* implicitly link `ggml-base.dll`** (the adapter
+  calls `ggml_backend_*`). The OS resolves that dependency when it loads our DLL,
+  which is why `ggml-base.dll` **must be co-located** (same folder or on `PATH`).
+- **`myaccel_core` is statically linked into the DLL** (built as a static
+  `.lib`), so there is no separate core DLL to ship.
+
+Implicit linking in CMake (the `ggml-myaccel → ggml-base` edge):
+
+```cmake
+target_link_libraries(ggml-myaccel PRIVATE ggml-base)        # in-tree target, or
+target_link_libraries(ggml-myaccel PRIVATE "C:/.../ggml-base.lib")
+```
+
+```mermaid
+flowchart TD
+    EXE["llama-cli.exe"]
+    GGML["ggml.dll"]
+    BASE["ggml-base.dll"]
+    MY["ggml-myaccel.dll"]
+    CORE["myaccel_core<br/>(static .lib, compiled INTO the dll)"]
+    SDK["NPU SW stack / driver"]
+
+    EXE -.->|"implicit link (import .lib, startup)"| GGML
+    EXE -.->|"implicit link"| BASE
+    EXE ==>|"EXPLICIT runtime load — ggml_backend_load then LoadLibrary/dlopen"| MY
+    MY -.->|"implicit link — must be co-located"| BASE
+    MY ---|"static link (no separate dll)"| CORE
+    MY -.->|"link/load NPU driver"| SDK
+```
+
+## Inside `ggml_backend_load_all()`
+
+`ggml_backend_load_all()` (called by llama-cli at startup) does two things:
+
+1. tries each **built-in** backend name (cuda, vulkan, cpu, ...) by searching for
+   `*ggml-<name>.*` and loading the best — this list does **not** include
+   "myaccel";
+2. reads the `GGML_BACKEND_PATH` environment variable and loads that library
+   directly via `ggml_backend_load(path)`.
+
+`ggml_backend_load(path)` then:
+
+1. `dl_load_library(path)` → `LoadLibraryW` / `dlopen` (the OS also resolves
+   dependent DLLs such as `ggml-base.dll`);
+2. `dl_get_sym("ggml_backend_init")` → `GetProcAddress` / `dlsym`;
+3. calls `ggml_backend_init()` → obtains the `ggml_backend_reg`;
+4. verifies `reg.api_version == GGML_BACKEND_API_VERSION` (rejects on mismatch);
+5. `register_backend(reg)` → the device joins the global registry and appears in
+   `ggml_backend_dev_count()` / `--list-devices`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant APP as llama-cli (main)
+    participant LOADALL as ggml_backend_load_all()
+    participant OS as OS loader
+    participant DLL as ggml-myaccel.dll
+    participant REG as ggml registry
+
+    User->>APP: set GGML_BACKEND_PATH=...; run llama-cli
+    APP->>LOADALL: ggml_backend_load_all()
+    LOADALL->>LOADALL: scan built-in names + read GGML_BACKEND_PATH
+    LOADALL->>OS: ggml_backend_load(path) then dl_load_library
+    Note over OS: LoadLibraryW / dlopen<br/>resolves dependent ggml-base.dll
+    OS-->>LOADALL: module handle
+    LOADALL->>OS: dl_get_sym("ggml_backend_init")
+    OS-->>LOADALL: function pointer
+    LOADALL->>DLL: ggml_backend_init()
+    DLL-->>LOADALL: ggml_backend_reg
+    LOADALL->>LOADALL: verify api_version == GGML_BACKEND_API_VERSION
+    LOADALL->>REG: register_backend(reg) (adds devices)
+    REG-->>LOADALL: ok
+    LOADALL-->>APP: done
+    APP->>REG: ggml_backend_dev_by_name("myaccel_npu")
+    REG-->>APP: device handle
+    APP-->>User: --list-devices shows myaccel_npu
+```
+
+## Choosing A (dynamic) vs B (in-tree)
+
+```mermaid
+flowchart TD
+    BLD["build ggml-myaccel.dll"] --> Q{"ship as a plugin?"}
+    Q -->|"A: dynamic load"| A1["copy dll next to ggml-base.dll"]
+    A1 --> A2["set GGML_BACKEND_PATH<br/>(or ggml_backend_load in code)"]
+    A2 --> A3["llama-cli --list-devices"]
+    A3 --> A4["run --device myaccel_npu -ngl N"]
+    Q -->|"B: in-tree"| B1["put source in ggml/src/ggml-myaccel/"]
+    B1 --> B2["ggml_add_backend(MyAccel) + CMakeLists"]
+    B2 --> B3["register_backend() in ggml-backend-reg.cpp"]
+    B3 --> B4["cmake -DGGML_MYACCEL=ON then rebuild"]
+    A4 --> D["device visible to ggml_backend_sched"]
+    B4 --> D
+```
+
+> PlantUML versions of every diagram on this page:
+> [`llama_integration.puml`](llama_integration.puml).
+
+---
+
 ## A. Use the prebuilt DLL via dynamic loading (recommended)
 
 ### A-1. Place runtime dependencies side by side
@@ -190,6 +308,27 @@ qwen, phi, ...). These files are **backend-agnostic** — they only build a
 So to run on the NPU you do **not** put backend code in `my_npu.cpp`. You
 register the backend (via A or B) and fill in `supports_op`; the *existing*
 model graph is then offloaded to the NPU automatically.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant MODEL as src/models/arch.cpp (graph builder)
+    participant SCHED as ggml_backend_sched
+    participant AD as GgmlMyAccelAdapter
+    participant CPU as CPU backend
+
+    MODEL->>SCHED: build op graph (no backend chosen)
+    loop each node
+        SCHED->>AD: supports_op(node)?
+        alt op supported
+            AD-->>SCHED: true → place on NPU
+        else not supported
+            AD-->>SCHED: false
+            SCHED->>CPU: place on CPU (fallback)
+        end
+    end
+    Note over MODEL: To run on the NPU you do NOT edit my_npu.cpp;<br/>register the backend + fill supports_op.
+```
 
 `src/models/my_npu.cpp` is only meaningful in one of these cases:
 
