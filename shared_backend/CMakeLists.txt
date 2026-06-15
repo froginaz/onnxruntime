@@ -39,13 +39,25 @@ if(MYACCEL_CORE_SHARED)
     # consumers (the adapters), so the symbols cross the DLL boundary cleanly.
     target_compile_definitions(myaccel_core PRIVATE MYACCEL_CORE_BUILD_DLL)
     target_compile_definitions(myaccel_core PUBLIC MYACCEL_CORE_USE_DLL)
-    set_target_properties(myaccel_core PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS OFF)
+    # Export only the symbols we mark (MYACCEL_API / NPU_API). On Windows that is
+    # automatic (dllexport); on Linux, hidden visibility keeps vendored header-only
+    # deps like nlohmann/json out of the DLL's symbol table.
+    set_target_properties(myaccel_core PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS OFF
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON)
     message(STATUS "myaccel_core: SHARED -> myaccel_core.dll (ship it beside the adapters)")
 else()
     add_library(myaccel_core STATIC ${MYACCEL_CORE_SOURCES})
     message(STATUS "myaccel_core: STATIC -> linked into each adapter DLL")
 endif()
 target_include_directories(myaccel_core PUBLIC core/include)
+
+# nlohmann/json (header-only, vendored single header in third_party/).
+# PRIVATE: json is an implementation detail of the core .cpp files only — it is
+# never exposed through npu_model.h / npu_core.h, so it does not leak into the
+# adapters or the DLL export surface. Header-only => compiled into myaccel_core.
+target_include_directories(myaccel_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
 # Link your NPU SDK here, e.g.:
 #   target_include_directories(myaccel_core PRIVATE "${MYNPU_SDK}/include")

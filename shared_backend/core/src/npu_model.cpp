@@ -13,11 +13,29 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>  // header-only, vendored; core-internal use only
+
 namespace {
 
 thread_local std::string g_last_error;
 
 void set_error(const char* msg) { g_last_error = msg ? msg : ""; }
+
+// Optional per-load configuration is passed as a JSON string under the option
+// key "options_json" (e.g. {"precision":"fp16","max_batch":8}). Parse + validate
+// it here so the NPU compiler gets structured options. Returns false on bad JSON.
+bool parse_options_json(uint32_t n_options, const char* const* keys,
+                        const char* const* values, nlohmann::json& out) {
+  out = nlohmann::json::object();
+  for (uint32_t i = 0; i < n_options; ++i) {
+    if (keys == nullptr || values == nullptr || keys[i] == nullptr) continue;
+    if (std::strcmp(keys[i], "options_json") != 0) continue;
+    out = nlohmann::json::parse(values[i] ? values[i] : "", /*cb*/ nullptr,
+                                /*allow_exceptions*/ false);
+    if (out.is_discarded()) return false;  // malformed JSON
+  }
+  return true;
+}
 
 // Materialize a blob into a contiguous host buffer regardless of source kind.
 // A real stack would mmap FILE/FD and stream CALLBACK lazily; the stub copies
@@ -83,9 +101,17 @@ const char* npu_status_str(npu_status_t status) {
 const char* npu_last_error(void) { return g_last_error.c_str(); }
 
 npu_status_t npu_model_compile(npu_device_t* /*device*/, const npu_blob_t* nnc,
-                               uint32_t /*n_options*/, const char* const* /*keys*/,
-                               const char* const* /*values*/, npu_model_t** out_model) {
+                               uint32_t n_options, const char* const* keys,
+                               const char* const* values, npu_model_t** out_model) {
   if (nnc == nullptr || out_model == nullptr) return NPU_ERR_INVALID_ARGUMENT;
+
+  nlohmann::json options;
+  if (!parse_options_json(n_options, keys, values, options)) {
+    set_error("'options_json' option is not valid JSON");
+    return NPU_ERR_INVALID_ARGUMENT;
+  }
+  // TODO: apply structured options (e.g. options.value("precision", "fp32"),
+  // options.value("max_batch", 1)) to the NPU compiler.
 
   auto model = std::unique_ptr<npu_model>(new npu_model());
   if (npu_status_t st = read_blob(*nnc, model->nnc_bytes)) return st;
