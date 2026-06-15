@@ -1,0 +1,212 @@
+# Using `ggml-myaccel.dll` from llama.cpp
+
+How to consume the MyAccel NPU backend from llama.cpp, two ways:
+
+- **(A) Dynamic loading** — ship the prebuilt `ggml-myaccel.dll` and have
+  llama.cpp load it at runtime. Recommended.
+- **(B) In-tree** — compile the backend into the ggml source tree as a
+  first-class backend (e.g. `llama.cpp/ggml/src/ggml-myaccel/`).
+
+It closes with a clarification about `llama.cpp/src/models/my_npu.cpp`, which is
+a common point of confusion.
+
+---
+
+## 0. How ggml loads a dynamic backend (the key mechanism)
+
+llama.cpp (ggml) opens a shared library with `ggml_backend_load(path)` and looks
+up exactly **one symbol, `ggml_backend_init`** (`ggml/src/ggml-backend-reg.cpp`):
+
+```c
+typedef ggml_backend_reg_t (*ggml_backend_init_t)(void);
+// dlsym / GetProcAddress("ggml_backend_init") -> call -> register the reg
+// if reg->api_version != GGML_BACKEND_API_VERSION the backend is rejected
+```
+
+`ggml-myaccel.dll` already exports `ggml_backend_init` (and
+`ggml_backend_myaccel_reg`) and fills `api_version = GGML_BACKEND_API_VERSION`,
+so it is load-compatible — **provided the ggml version it was built against
+matches the ggml version inside llama-cli** (otherwise `api_version` differs and
+the load is refused).
+
+---
+
+## A. Use the prebuilt DLL via dynamic loading (recommended)
+
+### A-1. Place runtime dependencies side by side
+
+`ggml-myaccel.dll` imports `ggml-base.dll`. Windows resolves that import from the
+same directory or from `PATH` at load time. Put all of them together:
+
+```
+<llama run dir>\
+   llama-cli.exe
+   ggml-base.dll        (already shipped with llama)
+   ggml-myaccel.dll     <- copy here
+   <your NPU stack DLLs> (once the core links a real SDK)
+```
+
+### A-2. Make llama.cpp load the DLL — two methods
+
+**(1) `GGML_BACKEND_PATH` environment variable — no code changes, simplest.**
+llama-cli calls `ggml_backend_load_all()` at startup, which loads the library
+pointed to by `GGML_BACKEND_PATH`:
+
+```bat
+set GGML_BACKEND_PATH=C:\...\shared_backend\build\ggml_backend\Debug\ggml-myaccel.dll
+llama-cli --list-devices
+```
+
+> Note: `ggml_backend_load_all()` only auto-scans the *built-in* backend names
+> (cuda/vulkan/cpu/...). It does not know the name "myaccel", so explicit
+> loading via this env var (or method 2) is what reliably registers it.
+
+**(2) Explicit load in code** — when you integrate directly:
+
+```c
+#include "ggml-backend.h"
+ggml_backend_reg_t reg = ggml_backend_load("C:/.../ggml-myaccel.dll");
+if (!reg) {
+    // load failed: check path, missing dependent DLLs, or api_version mismatch
+}
+```
+
+After a successful load the reg auto-registers, and the device is visible via
+`ggml_backend_dev_count()` / `ggml_backend_dev_by_name("myaccel_npu")`.
+
+### A-3. Verify the load
+
+```bat
+llama-cli --list-devices
+```
+
+The MyAccel device (`myaccel_npu`, type GPU) should appear. If it does not:
+
+- `ggml-base.dll` is not next to the DLL (dependency resolution failed) — most
+  common cause.
+- `api_version` mismatch (the DLL was built against a different ggml version).
+- `GGML_BACKEND_PATH` is wrong / mistyped.
+
+### A-4. Run inference on the device
+
+The device reports `GGML_BACKEND_DEVICE_TYPE_GPU`, so it is an offload target:
+
+```bat
+llama-cli -m model.gguf --device myaccel_npu -ngl 99 -p "Hello"
+```
+
+- `--device myaccel_npu` — use this device
+- `-ngl N` — offload N layers to GPU-type devices
+
+> ⚠️ **Important limitation.** The current scaffold returns `true` from
+> `device_supports_op` only for `MUL_MAT`. The ggml scheduler
+> (`ggml_backend_sched`) places **only the ops a backend claims** on that device
+> and falls everything else back to the CPU. So with `-ngl` today, most ops run
+> on the CPU and each one incurs a device↔host copy — often **slower** than pure
+> CPU. To get real acceleration, add the ops the model uses (RMS_NORM, ROPE,
+> SOFT_MAX, ADD, MUL, attention, ...) to `device_supports_op` *and* implement
+> their kernels in `backend_graph_compute`.
+
+---
+
+## B. Integrate in-tree as a ggml backend (`llama.cpp/ggml/...`)
+
+Instead of loading a DLL, compile the backend into ggml as a first-class
+backend, the same way `ggml-cuda` / `ggml-vulkan` are built. This is the
+`llama.cpp/ggml/src/ggml-myaccel/` path.
+
+### B-1. Source layout
+
+```
+llama.cpp/ggml/src/ggml-myaccel/
+   ggml-myaccel.cpp        <- the adapter from shared_backend
+   CMakeLists.txt
+```
+
+ggml's backend directory convention is `ggml/src/ggml-<name>/`.
+
+### B-2. Register with ggml's CMake
+
+ggml gates each backend behind `ggml_add_backend(<Name>)`. In
+`ggml/src/CMakeLists.txt`, next to the other backends:
+
+```cmake
+ggml_add_backend(MyAccel)
+```
+
+and `ggml/src/ggml-myaccel/CMakeLists.txt`:
+
+```cmake
+ggml_add_backend_library(ggml-myaccel ggml-myaccel.cpp)
+# link the NPU core
+# target_link_libraries(ggml-myaccel PRIVATE myaccel_core)
+```
+
+Enable it at configure time:
+
+```bat
+cmake -S llama.cpp -B build -DGGML_MYACCEL=ON
+```
+
+### B-3. Static registration (no DLL load)
+
+In-tree backends are registered at compile time in
+`ggml/src/ggml-backend-reg.cpp`, inside the registry constructor:
+
+```cpp
+#ifdef GGML_USE_MYACCEL
+    register_backend(ggml_backend_myaccel_reg());
+#endif
+```
+
+Now no `GGML_BACKEND_PATH` and no `ggml_backend_load` are needed — the device is
+present as soon as llama starts.
+
+### A vs B — which to choose
+
+- **Dynamic DLL (A)** is usually better: no host rebuild, easy to ship/swap, the
+  same philosophy as the onnxruntime plugin EP.
+- **In-tree (B)** when you want to upstream into ggml or unify the build.
+
+---
+
+## C. About `llama.cpp/src/models/my_npu.cpp` (clearing up a misconception)
+
+There is a likely design misconception worth stating plainly:
+
+**`src/models/*.cpp` are model-architecture graph builders, not the place where
+a backend is selected.** Recent llama.cpp split graph construction out of
+`llama-model.cpp` into per-architecture files `src/models/<arch>.cpp` (llama,
+qwen, phi, ...). These files are **backend-agnostic** — they only build a
+`ggml_cgraph` (the op graph).
+
+**Which device runs that graph is not decided by the model file.**
+`ggml_backend_sched` (the scheduler) does it:
+
+1. it looks at the registered devices,
+2. for each op it asks `device_supports_op()` — "can this backend run this op?",
+3. it places supported ops on that device (the NPU) and the rest on the CPU.
+
+So to run on the NPU you do **not** put backend code in `my_npu.cpp`. You
+register the backend (via A or B) and fill in `supports_op`; the *existing*
+model graph is then offloaded to the NPU automatically.
+
+`src/models/my_npu.cpp` is only meaningful in one of these cases:
+
+- You are adding a **new model architecture** → write its graph builder in
+  `my_npu.cpp` and register it in the `llama_arch` enum / `llm_load_hparams` /
+  graph dispatch. (This is a model-structure addition, *separate* from the NPU
+  backend work.)
+- You simply want to **run a model on the NPU** → `my_npu.cpp` is **not needed**.
+  Attach the backend with A or B and run with `--device myaccel_npu -ngl N`.
+
+---
+
+## Summary
+
+| Goal | How |
+|---|---|
+| Try the built DLL immediately | **A** — copy next to `ggml-base.dll`, set `GGML_BACKEND_PATH`, verify with `llama-cli --list-devices`, run `--device myaccel_npu -ngl N` |
+| Bake it into ggml | **B** — `ggml/src/ggml-myaccel/` + `ggml_add_backend(MyAccel)` + static `register_backend` in reg.cpp |
+| Real acceleration | implement `supports_op` + `backend_graph_compute` for the model's op set (only `MUL_MAT` today → mostly CPU fallback) |
+| `src/models/my_npu.cpp` | unrelated to backend selection; needed only when adding a new **model architecture** |
