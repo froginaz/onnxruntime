@@ -51,14 +51,17 @@ Consequences for this backend:
 - **`ggml-myaccel.dll` *does* implicitly link `ggml-base.dll`** (the adapter
   calls `ggml_backend_*`). The OS resolves that dependency when it loads our DLL,
   which is why `ggml-base.dll` **must be co-located** (same folder or on `PATH`).
-- **`myaccel_core` is statically linked into the DLL** (built as a static
-  `.lib`), so there is no separate core DLL to ship.
+- **`myaccel_core`** is, by default, a static `.lib` compiled into each adapter
+  (no separate DLL). Configure with **`-DMYACCEL_CORE_SHARED=ON`** to build it as
+  its own **`myaccel_core.dll`** that both adapters implicitly link; then
+  `myaccel_core.dll` must be **co-located** with the adapter DLLs.
 
-Implicit linking in CMake (the `ggml-myaccel → ggml-base` edge):
+Implicit linking in CMake (the `ggml-myaccel → ggml-base` / `→ myaccel_core` edges):
 
 ```cmake
 target_link_libraries(ggml-myaccel PRIVATE ggml-base)        # in-tree target, or
 target_link_libraries(ggml-myaccel PRIVATE "C:/.../ggml-base.lib")
+target_link_libraries(ggml-myaccel PRIVATE myaccel_core)     # static or import lib
 ```
 
 ```mermaid
@@ -67,16 +70,31 @@ flowchart TD
     GGML["ggml.dll"]
     BASE["ggml-base.dll"]
     MY["ggml-myaccel.dll"]
-    CORE["myaccel_core<br/>(static .lib, compiled INTO the dll)"]
+    CORE["myaccel_core.dll<br/>(separate when MYACCEL_CORE_SHARED=ON;<br/>else static-linked into the adapter)"]
     SDK["NPU SW stack / driver"]
 
     EXE -.->|"implicit link (import .lib, startup)"| GGML
     EXE -.->|"implicit link"| BASE
     EXE ==>|"EXPLICIT runtime load — ggml_backend_load then LoadLibrary/dlopen"| MY
     MY -.->|"implicit link — must be co-located"| BASE
-    MY ---|"static link (no separate dll)"| CORE
-    MY -.->|"link/load NPU driver"| SDK
+    MY -.->|"implicit link — co-located when shared"| CORE
+    CORE -.->|"link/load NPU driver"| SDK
 ```
+
+### Building the core as a separate DLL
+
+```bat
+cmake -S shared_backend -B build -DMYACCEL_CORE_SHARED=ON ^
+      -DORT_HOME=C:\ort -DLLAMA_CPP_DIR=C:\llama.cpp
+cmake --build build --config Release
+```
+
+Produces `myaccel_core.dll` (+ `myaccel_core.lib` import) alongside
+`ggml-myaccel.dll` and `myaccel_ort_ep.dll`. At runtime put `myaccel_core.dll`
+next to the adapter DLLs (and the host exe). Verified on Linux: the adapter's
+`NEEDED`/import table references `myaccel_core`, the core exports
+`npu_model_load` / `myaccel::*`, and the adapter still exports only its plugin
+entry points.
 
 ## Inside `ggml_backend_load_all()`
 

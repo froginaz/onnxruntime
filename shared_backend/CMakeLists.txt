@@ -10,6 +10,12 @@
 #
 # Build only one adapter:
 #   cmake -S . -B build -DMYACCEL_BUILD_GGML=OFF -DORT_HOME=C:/ort
+#
+# Separate the core into its own DLL (myaccel_core.dll), imported by both
+# adapters instead of static-linked into each:
+#   cmake -S . -B build -DMYACCEL_CORE_SHARED=ON -DORT_HOME=C:/ort -DLLAMA_CPP_DIR=C:/llama.cpp
+#   => myaccel_core.dll + ggml-myaccel.dll + myaccel_ort_ep.dll
+#      (ship myaccel_core.dll next to the adapter DLLs / the host exe)
 
 cmake_minimum_required(VERSION 3.26)
 project(myaccel_shared_backend LANGUAGES CXX)
@@ -29,10 +35,15 @@ set(MYACCEL_CORE_SOURCES
 
 if(MYACCEL_CORE_SHARED)
     add_library(myaccel_core SHARED ${MYACCEL_CORE_SOURCES})
+    # MYACCEL_API / NPU_API -> dllexport while building the core, dllimport for
+    # consumers (the adapters), so the symbols cross the DLL boundary cleanly.
     target_compile_definitions(myaccel_core PRIVATE MYACCEL_CORE_BUILD_DLL)
     target_compile_definitions(myaccel_core PUBLIC MYACCEL_CORE_USE_DLL)
+    set_target_properties(myaccel_core PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS OFF)
+    message(STATUS "myaccel_core: SHARED -> myaccel_core.dll (ship it beside the adapters)")
 else()
     add_library(myaccel_core STATIC ${MYACCEL_CORE_SOURCES})
+    message(STATUS "myaccel_core: STATIC -> linked into each adapter DLL")
 endif()
 target_include_directories(myaccel_core PUBLIC core/include)
 

@@ -17,20 +17,26 @@ skinparam shadowing false
 [ggml.dll] as GGML
 [ggml-base.dll] as BASE
 [ggml-myaccel.dll] as MY
-component "myaccel_core\n(static .lib, compiled INTO the dll)" as CORE
+[myaccel_core.dll] as CORE
 [NPU SW stack / driver] as SDK
 
 EXE ..> GGML  : implicit link\n(import .lib at build,\nloaded by OS at startup)
 EXE ..> BASE  : implicit link
 EXE ..>  MY   : EXPLICIT load at RUNTIME\nggml_backend_load() ->\nLoadLibrary / dlopen (by path)
 MY  ..> BASE  : implicit link\n(OS resolves when MY is loaded\n=> must be co-located)
-MY  *-- CORE  : statically linked\n(no separate dll)
-MY  ..> SDK   : link / load NPU driver
+MY  ..> CORE  : implicit link\n(MYACCEL_CORE_SHARED=ON\n=> co-located)
+CORE ..> SDK  : link / load NPU driver
 
 note bottom of EXE
   The executable does NOT link the backend dll.
   ggml backends are discovered & loaded at runtime,
   so a new NPU build = drop in a dll, no host rebuild.
+end note
+
+note bottom of CORE
+  Separate DLL with MYACCEL_CORE_SHARED=ON.
+  Default (OFF): myaccel_core is a static .lib
+  compiled INTO each adapter (no separate dll).
 end note
 @enduml
 
