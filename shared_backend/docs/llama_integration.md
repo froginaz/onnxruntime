@@ -81,6 +81,44 @@ flowchart TD
     CORE -.->|"link/load NPU driver"| SDK
 ```
 
+### Both runtimes together (onnxruntime + llama.cpp)
+
+The same picture extended to the onnxruntime path. The symmetry is the point:
+**neither adapter links its framework** — each is loaded at runtime through a
+single entry symbol (`CreateEpFactories` for ORT, `ggml_backend_init` for ggml)
+— and **both adapters share one `myaccel_core.dll`**.
+
+```mermaid
+flowchart TD
+    subgraph ORTP["onnxruntime path"]
+        APPO["host app (uses onnxruntime)"]
+        ORT["onnxruntime.dll"]
+        EP["myaccel_ort_ep.dll"]
+    end
+    subgraph LLP["llama.cpp path"]
+        EXE["llama-cli.exe"]
+        GGML["ggml.dll"]
+        BASE["ggml-base.dll"]
+        MY["ggml-myaccel.dll"]
+    end
+    CORE["myaccel_core.dll<br/>(separate when MYACCEL_CORE_SHARED=ON,<br/>shared by both adapters)"]
+    SDK["NPU SW stack / driver"]
+
+    APPO -.->|"implicit link (onnxruntime.lib, startup)"| ORT
+    ORT ==>|"EXPLICIT runtime load — RegisterExecutionProviderLibrary → LoadLibrary + GetProcAddress(CreateEpFactories)"| EP
+    EP -.->|"implicit link — co-located"| CORE
+    EXE -.->|"implicit link"| GGML
+    EXE -.->|"implicit link"| BASE
+    EXE ==>|"EXPLICIT runtime load — ggml_backend_load → LoadLibrary + dlsym(ggml_backend_init)"| MY
+    MY -.->|"implicit link — co-located"| BASE
+    MY -.->|"implicit link — co-located"| CORE
+    CORE -.->|"link/load NPU driver"| SDK
+```
+
+> The onnxruntime EP plugin does **not** link `onnxruntime.dll`; it uses the
+> `OrtApi` passed into `CreateEpFactories`. See `npu_model_api.md` /
+> `design.md` for the ORT-side details.
+
 ### Building the core as a separate DLL
 
 ```bat

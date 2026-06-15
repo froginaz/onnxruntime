@@ -129,3 +129,51 @@ loop each node
 end
 note over MODEL : To run on the NPU you do NOT edit my_npu.cpp;\nyou register the backend + fill supports_op.
 @enduml
+
+
+'------------------------------------------------------------------------------
+' 5. Linking & loading — onnxruntime + llama.cpp together (share myaccel_core.dll)
+'------------------------------------------------------------------------------
+@startuml linking_overview_both
+title Linking & loading: onnxruntime + llama.cpp (both share myaccel_core.dll)
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "onnxruntime path" {
+  [host app\n(uses onnxruntime)] as APPO
+  [onnxruntime.dll] as ORT
+  [myaccel_ort_ep.dll] as EP
+}
+package "llama.cpp path" {
+  [llama-cli.exe] as EXE
+  [ggml.dll] as GGML
+  [ggml-base.dll] as BASE
+  [ggml-myaccel.dll] as MY
+}
+[myaccel_core.dll] as CORE
+[NPU SW stack / driver] as SDK
+
+APPO ..> ORT  : implicit link\n(onnxruntime.lib at build,\nloaded at startup)
+ORT  ..> EP   : EXPLICIT runtime load\nRegisterExecutionProviderLibrary ->\nLoadLibrary + GetProcAddress("CreateEpFactories")
+EP   ..> CORE : implicit link (co-located)
+
+EXE  ..> GGML : implicit link
+EXE  ..> BASE : implicit link
+EXE  ..> MY   : EXPLICIT runtime load\nggml_backend_load ->\nLoadLibrary + dlsym("ggml_backend_init")
+MY   ..> BASE : implicit link (co-located)
+MY   ..> CORE : implicit link (co-located)
+
+CORE ..> SDK  : link / load NPU driver
+
+note bottom of EP
+  Neither adapter LINKS its framework.
+  The EP uses the OrtApi handed to CreateEpFactories;
+  ggml-myaccel uses ggml-base. Each is loaded at runtime
+  via a single entry symbol -> no host rebuild.
+end note
+
+note bottom of CORE
+  Separate DLL with MYACCEL_CORE_SHARED=ON, shared by
+  both adapters. Default (OFF): static-linked into each.
+end note
+@enduml
