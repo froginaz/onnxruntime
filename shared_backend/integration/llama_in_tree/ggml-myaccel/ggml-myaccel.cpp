@@ -1,16 +1,19 @@
 // Copyright (c) 2026.
-// llama.cpp / ggml backend adapter -> ggml-myaccel.dll
+// llama.cpp / ggml backend adapter -> ggml-myaccel
 //
-// This implements the ggml-backend vtables (reg -> device -> buffer-type ->
-// buffer -> backend) on top of the framework-agnostic MyAccel NPU core. It is a
-// structural skeleton: device/buffer plumbing is wired, op dispatch in
-// graph_compute is a stub you extend op-by-op.
+// This file is meant to live IN the llama.cpp tree at
+//   llama.cpp/ggml/src/ggml-myaccel/ggml-myaccel.cpp
+// and is built in-tree (see the sibling CMakeLists.txt). It implements the
+// ggml-backend vtables (reg -> device -> buffer-type -> buffer -> backend) on top
+// of the MyAccel NPU core, which it links from the prebuilt shared_backend
+// npu_core.lib/.dll. It is a structural skeleton: device/buffer plumbing is
+// wired, op dispatch in graph_compute is a stub you extend op-by-op.
 //
 // NOTE on the dynamic-load entry symbol: ggml has changed the exact symbol it
 // looks up for out-of-tree backends across versions (e.g. ggml_backend_init).
-// Confirm against your llama.cpp checkout (ggml/src/ggml-backend-reg.cpp) and
-// keep the alias at the bottom of this file in sync. The reg function itself,
-// ggml_backend_myaccel_reg(), is stable and also works when linked statically.
+// For an in-tree build the stable reg function ggml_backend_myaccel_reg() is
+// what ggml-backend-reg.cpp calls; the ggml_backend_init alias is only needed
+// for the dynamic-plugin path.
 
 #include "ggml.h"
 #include "ggml-backend.h"
@@ -19,7 +22,7 @@
 #include <cstring>
 #include <vector>
 
-#include "myaccel/npu_api.h"  // sole NPU access point (myaccel::npu)
+#include "myaccel/npu_api.h"  // sole NPU access point (myaccel::npu); from shared_backend headers
 
 // ---------------------------------------------------------------------------
 // Buffer
@@ -257,8 +260,8 @@ constexpr ggml_backend_reg_i kRegIface = {
 
 }  // namespace
 
-// Stable, link-time entry point. Call this if you statically register the
-// backend, or via ggml_backend_register(ggml_backend_myaccel_reg()).
+// Stable, link-time entry point. ggml-backend-reg.cpp calls this for an in-tree
+// backend (register_backend(ggml_backend_myaccel_reg())).
 extern "C" GGML_BACKEND_API ggml_backend_reg_t ggml_backend_myaccel_reg(void) {
   static ggml_backend_reg reg = {
       /* .api_version = */ GGML_BACKEND_API_VERSION,
@@ -268,8 +271,8 @@ extern "C" GGML_BACKEND_API ggml_backend_reg_t ggml_backend_myaccel_reg(void) {
   return &reg;
 }
 
-// Dynamic-load entry point used by ggml_backend_load_all(). Confirm the exact
-// expected symbol name for your ggml version and adjust if needed.
+// Dynamic-load entry point used by ggml_backend_load_all() (plugin path only).
+// Confirm the exact expected symbol name for your ggml version and adjust.
 extern "C" GGML_BACKEND_API ggml_backend_reg_t ggml_backend_init(void) {
   return ggml_backend_myaccel_reg();
 }

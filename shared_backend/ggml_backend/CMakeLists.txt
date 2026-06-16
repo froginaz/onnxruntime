@@ -13,7 +13,10 @@ if(NOT DEFINED LLAMA_CPP_DIR)
     message(FATAL_ERROR "Set -DLLAMA_CPP_DIR=<llama.cpp root> to build the ggml backend")
 endif()
 
-add_library(ggml-myaccel SHARED ggml-myaccel.cpp)
+# Single source of truth: the adapter lives under integration/ (it is the file
+# copied into llama.cpp/ggml/src/ggml-myaccel for the in-tree build).
+add_library(ggml-myaccel SHARED
+    "${CMAKE_CURRENT_SOURCE_DIR}/../integration/llama_in_tree/ggml-myaccel/ggml-myaccel.cpp")
 
 target_link_libraries(ggml-myaccel PRIVATE myaccel_core)
 
