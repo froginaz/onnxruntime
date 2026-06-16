@@ -68,6 +68,43 @@ The public surface vs internals:
   include not on the adapters' path); wrapped by `npu_api.h` and hidden from the
   DLL export surface.
 
+### Why `npu_model.h` is a C ABI but `npu_api.h` is C++
+
+Both are public headers of `myaccel_core`, but they cross **different kinds of
+boundary**, so their stability requirements differ.
+
+| | `npu_model.h` | `npu_api.h` |
+|---|---|---|
+| Form | **pure C ABI** | C++ (`namespace myaccel::npu`) |
+| Role | the NPU stack's **canonical model-loading contract** (the GAIA "narrow waist") | a **C++ convenience façade** for *this* repo's adapters |
+| What crosses it | version-sensitive **POD structs** (`npu_model_load_info_t`, `npu_blob_t`, manifest) | opaque pointers + scalars only |
+| Consumers | potentially **other languages / runtimes / separately-built hosts** (Python, Rust, prebuilt) | the C++ adapters (ORT/ggml/ExecuTorch), built with the **same toolchain** as the core |
+| Stability need | highest — `struct_size` + `api_version` negotiation | ordinary — intra-build |
+
+`npu_model.h` is **C** because model loading is the most external, most
+data-heavy, most version-sensitive boundary:
+
+1. **Language neutrality** — C symbols are unmangled (`npu_model_load`), so any
+   FFI (Python/Rust/Go) can bind them; a C++ surface would expose mangled names.
+2. **ABI stability** — the C++ ABI breaks across compilers/STL versions
+   (mangling, `std::string`/`std::vector` layout, exceptions/RTTI). C POD structs
+   + opaque handles keep a **fixed binary layout** across toolchains.
+3. **Versioned evolution** — `struct_size` + `api_version` let an older host
+   safely load a newer stack and vice versa — only meaningful for structs that
+   cross a C boundary.
+4. **Layout *is* the contract** — `npu_blob_t` (a union), the weight manifest,
+   etc. need a documented binary layout, i.e. C PODs.
+
+`npu_api.h` is **C++** because its only consumers are the in-repo adapters,
+compiled together with the core by the **same compiler**: there is no
+cross-toolchain or cross-language boundary to protect, the calls pass only opaque
+pointers and scalars, and C++ buys type safety (`enum class`), namespaces, and
+ergonomics. (Analogy: the CUDA *Driver API* is C — a stable external boundary —
+while a project's internal C++ helpers around it are C++.)
+
+See [`npu_model_api.md`](npu_model_api.md) and [`npu_api.md`](npu_api.md) for the
+per-API usage.
+
 ---
 
 ## 3. Class diagram

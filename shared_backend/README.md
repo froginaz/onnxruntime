@@ -31,7 +31,7 @@ core + one thin adapter per runtime (onnxruntime, llama.cpp, ExecuTorch).
 | Path | Role |
 |------|------|
 | `core/` | NPU SDK abstraction. The only shared code. **No framework types.** |
-| `core/include/myaccel/npu_api.h` | **Public façade** (`myaccel::npu`) — the adapters' sole NPU access point. |
+| `core/include/myaccel/npu_api.h` | **Public façade** (`myaccel::npu`) — the adapters' sole NPU access point; see [`docs/npu_api.md`](docs/npu_api.md). |
 | `core/include/myaccel/npu_model.h` | **Model-loading C ABI** the runtimes call — see [`docs/npu_model_api.md`](docs/npu_model_api.md). |
 | `core/internal/myaccel/` | Internal `npu_core.h` / `npu_memory.h` (PRIVATE; wrapped by the façade). |
 | `ort_ep/` | onnxruntime plugin Execution Provider adapter (-> `myaccel_ort_ep.dll`). |
