@@ -49,7 +49,9 @@ Internal (under `core/internal/`, a PRIVATE include not on the adapters' path; w
 ## Build on Windows (CMake)
 
 > On Windows you don't hand-write a Makefile — CMake **generates** the build
-> (`.sln`/`.vcxproj`, Ninja, or NMake Makefiles) from `CMakeLists.txt`.
+> (`.sln`/`.vcxproj`, Ninja, or NMake Makefiles) from `CMakeLists.txt`. Library
+> file extensions per OS (`.dll`/`.lib` vs `.so` vs `.dylib`):
+> [`docs/library_extensions.md`](docs/library_extensions.md).
 
 From an **x64 Native Tools Command Prompt for VS 2022**:
 
