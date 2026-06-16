@@ -333,6 +333,12 @@ Instead of loading a DLL, compile the backend into ggml as a first-class
 backend, the same way `ggml-cuda` / `ggml-vulkan` are built. This is the
 `llama.cpp/ggml/src/ggml-myaccel/` path.
 
+> **Ready-made template:** `shared_backend/integration/llama_in_tree/` contains a
+> drop-in `ggml-myaccel/CMakeLists.txt` that reuses the canonical adapter source,
+> links the prebuilt NPU core (`myaccel_npu.lib`/`.dll`) from the sibling
+> `shared_backend`, and copies the runtime DLL next to `llama-cli.exe`
+> (POST_BUILD). See its README for the copy + registration steps.
+
 ### B-1. Source layout
 
 ```

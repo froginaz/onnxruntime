@@ -53,6 +53,12 @@ else()
     add_library(myaccel_core STATIC ${MYACCEL_CORE_SOURCES})
     message(STATUS "myaccel_core: STATIC -> linked into each adapter DLL")
 endif()
+
+# Optional: rename the produced library file (stem). The CMake target stays
+# `myaccel_core`, only the output file changes — e.g. set to "myaccel_npu" to get
+# myaccel_npu.dll / myaccel_npu.lib for the in-tree llama.cpp integration.
+set(MYACCEL_CORE_OUTPUT_NAME "myaccel_core" CACHE STRING "Output file name (stem) of the NPU core library")
+set_target_properties(myaccel_core PROPERTIES OUTPUT_NAME "${MYACCEL_CORE_OUTPUT_NAME}")
 # PUBLIC: the façade (npu_api.h) + model C ABI (npu_model.h) only.
 # PRIVATE: the internal npu_core / npu_memory headers — adapters that link
 # myaccel_core inherit PUBLIC but NOT PRIVATE, so they can reach the NPU only
