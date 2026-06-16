@@ -118,3 +118,34 @@ llama-cli.exe -m model.gguf --device myaccel_npu -ngl 99 -p "Hello"
 - **Alternative (no in-tree build).** Prefer not to modify the llama.cpp tree?
   Use the dynamic-plugin path (`docs/llama_integration.md` §A): build
   `ggml-myaccel.dll` standalone and load it via `GGML_BACKEND_PATH`.
+
+## Troubleshooting: `NPU_CORE_LIB not found`
+
+The CMakeLists resolves the core import lib in this order: explicit
+`-DNPU_CORE_LIB=...`, else a **recursive** search under
+`shared_backend/build` and `shared_backend/out`. Common causes when it still
+fails:
+
+1. **shared_backend not built as a shared lib.** You must build it with
+   `-DMYACCEL_CORE_SHARED=ON` (Step 1). Without it there is no import `.lib`.
+2. **Built into a different directory.** VS "Open Folder"/presets emit to
+   `out/build/<preset>/...`, not `build/`. Find the real path:
+   `dir /s /b shared_backend\*.lib` and pass `-DNPU_CORE_LIB=<that path>`.
+3. **Wrong/empty `SHARED_BACKEND_DIR`.** If the headers were found (no header
+   FATAL_ERROR) the path is correct; otherwise pass `-DSHARED_BACKEND_DIR=...`.
+4. **Stale CMake cache (most common after a fix).** If you configured *before*
+   building the lib, a `find_library` result may be cached as `-NOTFOUND` in the
+   llama build dir. Delete `llama.cpp\build\CMakeCache.txt` (or the whole
+   `llama.cpp\build` dir) and reconfigure. (This template avoids the cache trap
+   by re-globbing every configure, but a cache from an older template version
+   can still bite.)
+5. **Name mismatch.** The lib must be `npu_core.lib` / `myaccel_core.lib`
+   (or `libnpu_core.so`). If you used a different `OUTPUT_NAME`, pass the exact
+   path via `-DNPU_CORE_LIB`.
+
+Quick unblock: always works regardless of layout —
+```bat
+cmake -S llama.cpp -B llama.cpp\build -DGGML_MYACCEL=ON ^
+      -DNPU_CORE_LIB=C:\...\shared_backend\build\Release\npu_core.lib ^
+      -DNPU_CORE_DLL=C:\...\shared_backend\build\Release\npu_core.dll
+```

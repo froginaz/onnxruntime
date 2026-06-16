@@ -38,21 +38,35 @@ target_include_directories(ggml-myaccel PRIVATE
 #   cmake -S shared_backend -B shared_backend/build -DMYACCEL_CORE_SHARED=ON ^
 #         -DMYACCEL_CORE_OUTPUT_NAME=npu_core -DMYACCEL_BUILD_GGML=OFF -DMYACCEL_BUILD_ORT_EP=OFF
 #   cmake --build shared_backend/build --config Release
-set(NPU_CORE_LIB "" CACHE FILEPATH "Path to npu_core.lib / libnpu_core.so (or myaccel_core)")
+#
+# Resolution order: (1) explicit -DNPU_CORE_LIB=...  (2) recursive search under
+# shared_backend/build and /out (handles VS Open-Folder out/build/<preset>/...).
+# The recursive search runs EVERY configure, so it picks up a lib you built
+# after a previous (failed) configure — no stale find_library cache.
 if(NOT NPU_CORE_LIB)
-    find_library(NPU_CORE_LIB
-        NAMES npu_core myaccel_core myaccel_npu
-        HINTS "${SHARED_BACKEND_DIR}/build" "${SHARED_BACKEND_DIR}/build/Release"
-              "${SHARED_BACKEND_DIR}/build/Debug"
-        PATH_SUFFIXES "" Release Debug lib lib/Release lib/Debug
-        NO_DEFAULT_PATH)
+    file(GLOB_RECURSE _npu_core_libs
+        "${SHARED_BACKEND_DIR}/build/*npu_core.lib"
+        "${SHARED_BACKEND_DIR}/build/*myaccel_core.lib"
+        "${SHARED_BACKEND_DIR}/out/*npu_core.lib"
+        "${SHARED_BACKEND_DIR}/out/*myaccel_core.lib"
+        "${SHARED_BACKEND_DIR}/build/*libnpu_core.so"
+        "${SHARED_BACKEND_DIR}/build/*libmyaccel_core.so")
+    if(_npu_core_libs)
+        list(GET _npu_core_libs 0 NPU_CORE_LIB)
+    endif()
 endif()
-if(NOT NPU_CORE_LIB)
+if(NOT NPU_CORE_LIB OR NOT EXISTS "${NPU_CORE_LIB}")
     message(FATAL_ERROR
-        "npu_core import library not found under '${SHARED_BACKEND_DIR}/build'.\n"
-        "  1) Build shared_backend with -DMYACCEL_CORE_SHARED=ON (optionally\n"
-        "     -DMYACCEL_CORE_OUTPUT_NAME=npu_core)\n"
-        "  2) Re-run with -DNPU_CORE_LIB=<full path to npu_core.lib / libnpu_core.so>")
+        "npu_core import library not found.\n"
+        "  searched recursively under: ${SHARED_BACKEND_DIR}/build and /out\n"
+        "  1) Build shared_backend as a shared lib FIRST:\n"
+        "       cmake -S shared_backend -B shared_backend/build -DMYACCEL_CORE_SHARED=ON \\\n"
+        "             -DMYACCEL_CORE_OUTPUT_NAME=npu_core -DMYACCEL_BUILD_GGML=OFF -DMYACCEL_BUILD_ORT_EP=OFF\n"
+        "       cmake --build shared_backend/build --config Release\n"
+        "  2) Confirm the file exists:  dir /s /b shared_backend\\build\\*.lib\n"
+        "  3) Pass it explicitly:       -DNPU_CORE_LIB=<full path to npu_core.lib>\n"
+        "  NOTE: if you built the lib AFTER a failed configure, delete the llama\n"
+        "        build dir's CMakeCache.txt (or the whole build dir) and reconfigure.")
 endif()
 message(STATUS "ggml-myaccel: linking NPU core -> ${NPU_CORE_LIB}")
 target_link_libraries(ggml-myaccel PRIVATE "${NPU_CORE_LIB}")
@@ -60,25 +74,23 @@ target_link_libraries(ggml-myaccel PRIVATE "${NPU_CORE_LIB}")
 # --- copy the runtime core DLL next to the built binaries (Windows) --------
 # So llama-cli.exe (same bin/ dir) can load npu_core.dll at runtime.
 if(WIN32)
-    set(NPU_CORE_DLL "" CACHE FILEPATH "Path to npu_core.dll (or myaccel_core.dll)")
     if(NOT NPU_CORE_DLL)
-        file(GLOB _npu_core_dlls
-            "${SHARED_BACKEND_DIR}/build/Release/npu_core.dll"
-            "${SHARED_BACKEND_DIR}/build/Debug/npu_core.dll"
-            "${SHARED_BACKEND_DIR}/build/npu_core.dll"
-            "${SHARED_BACKEND_DIR}/build/Release/myaccel_core.dll"
-            "${SHARED_BACKEND_DIR}/build/Debug/myaccel_core.dll"
-            "${SHARED_BACKEND_DIR}/build/myaccel_core.dll")
+        file(GLOB_RECURSE _npu_core_dlls
+            "${SHARED_BACKEND_DIR}/build/*npu_core.dll"
+            "${SHARED_BACKEND_DIR}/build/*myaccel_core.dll"
+            "${SHARED_BACKEND_DIR}/out/*npu_core.dll"
+            "${SHARED_BACKEND_DIR}/out/*myaccel_core.dll")
         if(_npu_core_dlls)
             list(GET _npu_core_dlls 0 NPU_CORE_DLL)
         endif()
     endif()
-    if(NPU_CORE_DLL)
+    if(NPU_CORE_DLL AND EXISTS "${NPU_CORE_DLL}")
         add_custom_command(TARGET ggml-myaccel POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${NPU_CORE_DLL}" "$<TARGET_FILE_DIR:ggml-myaccel>"
             COMMENT "ggml-myaccel: copying ${NPU_CORE_DLL} -> $<TARGET_FILE_DIR:ggml-myaccel>")
     else()
-        message(WARNING "npu_core.dll not found to auto-copy; copy it next to llama-cli.exe manually")
+        message(WARNING "npu_core.dll not found to auto-copy; pass -DNPU_CORE_DLL=<path> "
+                        "or copy it next to llama-cli.exe manually")
     endif()
 endif()
