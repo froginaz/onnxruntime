@@ -120,6 +120,9 @@ either way.
 
 ## 5. Pillar 2 — GAIA-Diff: cross-framework parity verification (RQ2)
 
+> Full system design: [`gaia_diff_design.md`](gaia_diff_design.md) (+ diagrams in
+> `gaia_diff_design.puml`).
+
 ### 5.1 Problem
 One backend, three front-end ABIs. A bug can live in (a) a front-end's lowering
 to the common container, (b) the API/weight-delivery boundary, or (c) the shared
