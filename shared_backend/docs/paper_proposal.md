@@ -121,7 +121,8 @@ either way.
 ## 5. Pillar 2 — GAIA-Diff: cross-framework parity verification (RQ2)
 
 > Full system design: [`gaia_diff_design.md`](gaia_diff_design.md) (+ diagrams in
-> `gaia_diff_design.puml`).
+> `gaia_diff_design.puml`). **Formal-methods upgrade** (verified-sound oracle +
+> proved invariants + checked protocol): [`formal_methods.md`](formal_methods.md).
 
 ### 5.1 Problem
 One backend, three front-end ABIs. A bug can live in (a) a front-end's lowering

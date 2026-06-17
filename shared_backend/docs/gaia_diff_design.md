@@ -153,6 +153,10 @@ through the typed waist artifacts).
 
 ## 4. Tolerance model `τ`
 
+> For the **proved-sound** version of this tolerance (certified floating-point
+> error bounds turning `τ` into a theorem), see
+> [`formal_methods.md`](formal_methods.md) §1.
+
 Naive bit-equality is wrong (legitimate fp reordering, quantization). A single
 global `rtol/atol` is also wrong (hides bugs in long reductions, false-positives
 in well-conditioned ops). GAIA-Diff derives a **per-output bound**:
