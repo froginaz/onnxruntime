@@ -108,6 +108,7 @@ Reference ecosystems to study/borrow from: CUDA (cuBLAS/cuDNN/TensorRT/Triton),
   (ii) SPMD-on-SIMD (thread→lane + predicated divergence) via the `vector`
   dialect. Provide CUDA header/intrinsic shims (`threadIdx`, `__shared__`,
   `__syncthreads`, warp ops). Deliver: a CUDA `__global__` GEMM runs both ways.
+  **Detailed design: [`cuda_frontend_design.md`](cuda_frontend_design.md).**
 - **WS3 — Runtime + driver + the public boundary (L0).** Device/memory/queues/
   streams/events; expose them under the existing `npu_api` façade; the
   `npu_model` C ABI for model loading. Deliver: load + run an nnc on real HW.

@@ -1,0 +1,71 @@
+'==============================================================================
+' WS2 — CUDA front-end + SIMT/SIMD lowering (PlantUML)
+'   plantuml shared_backend/docs/cuda_frontend_design.puml
+'==============================================================================
+
+'------------------------------------------------------------------------------
+' 1. Compilation pipeline
+'------------------------------------------------------------------------------
+@startuml cuda_pipeline
+title CUDA-compatible compile: one source -> SIMT or SIMD
+skinparam shadowing false
+
+start
+:CUDA C++ (subset) + cuda_compat.h;
+:Clang CUDA front-end (custom triple);
+:Clang -> MLIR (Polygeist / ClangIR);
+:SPMD convergence IR\n(MLIR gpu + memref/scf/vector);
+:analyses\n- uniformity (divergence)\n- address affinity\n- barrier convergence;
+if (target.execution_model?) then (SIMT)
+  :map block->core, thread->HW lane;
+  :barrier->HW sync; shared->scratchpad;
+  :shuffle/mma->HW intrinsics;
+else (SIMD)
+  :thread-vectorize axis (width W);
+  :varying->vector<WxT>, uniform->scalar;
+  :if-convert / partial linearization (masks);
+  :barrier->loop fission; shuffle->lane perm;
+  :coalesce vs gather/scatter;
+endif
+:lower to llvm dialect + NPU intrinsics;
+:LLVM backend -> device ISA -> kernel binary;
+stop
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 2. Divergence handling (SIMD path)
+'------------------------------------------------------------------------------
+@startuml cuda_divergence
+title SIMD path — per-construct divergence handling
+skinparam shadowing false
+
+start
+:value / branch;
+if (uniform across lanes?) then (yes)
+  :keep scalar (cheap path);
+  stop
+else (no / varying)
+  if (construct type?) then (branch if/else)
+    :if-convert -> complementary masks;
+    :execute both sides masked;
+    :vector.select at reconvergence;
+  elseif (loop) then (varying loop)
+    :per-lane active mask;
+    :masked while until all lanes exit;
+  elseif (memory access) then (varying addr)
+    if (affine unit-stride in threadIdx.x?) then (yes)
+      :coalesced vector.load/store;
+    else (no)
+      :masked gather / scatter;
+    endif
+  elseif (barrier) then (__syncthreads)
+    if (block fits one vector iter? B<=W) then (yes)
+      :no-op (lane-synchronous);
+    else (no)
+      :loop fission + spill shared live values;
+    endif
+  endif
+  stop
+endif
+@enduml
