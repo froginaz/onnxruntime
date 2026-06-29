@@ -1,0 +1,124 @@
+'==============================================================================
+' GAIA-Diff — system design diagrams (PlantUML)
+'   plantuml shared_backend/docs/gaia_diff_design.puml
+'==============================================================================
+
+'------------------------------------------------------------------------------
+' 1. Architecture
+'------------------------------------------------------------------------------
+@startuml gaia_diff_arch
+title GAIA-Diff architecture
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "Front-ends (heterogeneous ABIs)" {
+  [ONNX Runtime EP] as ORT
+  [llama.cpp ggml] as GGML
+  [ExecuTorch delegate] as ET
+}
+
+[Boundary Tap\n(wrapper over npu_model / npu_api C ABI)] as TAP
+[Reference Executor\n(deterministic nnc interpreter)] as REF
+[Differential Engine] as DIFF
+[Tolerance Model] as TOL
+[Localizer\n(stage substitution)] as LOC
+[Generator + Minimizer] as GEN
+[Conformance Suite] as CONF
+
+ORT  --> TAP
+GGML --> TAP
+ET   --> TAP
+
+TAP --> DIFF : Trace_f (nnc, W-fp, iomap, op-outs)
+REF --> DIFF : y_ref
+TOL --> DIFF : per-output bound tau
+DIFF --> LOC : violation (m,x,f)
+TAP --> LOC : canonical artifacts A1..A4
+REF --> LOC : substitution stages
+LOC --> [report : layer attribution L]
+GEN --> DIFF : m, x
+CONF --> TAP : API contract checks
+
+note bottom of TAP
+  The shared waist is the single point all
+  front-ends pass through -> we tap it once,
+  capture framework-independent artifacts,
+  and substitute stages for localization.
+end note
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 2. Stage-substitution localization (decision flow)
+'------------------------------------------------------------------------------
+@startuml gaia_diff_localize
+title Localizer — attribute a divergence to one layer
+skinparam shadowing false
+
+start
+:violation (m, x, f);
+if (nnc_f canonical-equal nnc_ref?) then (no)
+  :return LOWER (topology);
+  stop
+endif
+if (weights W_f ~= W_ref per tensor?) then (no)
+  :return LOWER (weight conversion);
+  stop
+endif
+if (iomap_f == iomap_ref?) then (no)
+  if (rerun nnc_ref with remapped I/O ~= y_ref?) then (yes)
+    :return IOBIND;
+    stop
+  endif
+endif
+if (deliver(W_f, COPY) fingerprint == deliver(W_f, REFERENCE_HOST)?) then (no)
+  :return DELIVER;
+  stop
+endif
+if (dtype_map(nnc_f) == dtype_map(nnc_ref)?) then (no)
+  :return DTYPE;
+  stop
+endif
+:record-mode op replay;
+:k = first op where op_out_f !~= op_out_ref;
+:return KERNEL @ op k;
+stop
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 3. Differential run with the Boundary Tap
+'------------------------------------------------------------------------------
+@startuml gaia_diff_run
+title Differential run (one model, all front-ends + reference)
+autonumber
+skinparam shadowing false
+
+participant "Differential Engine" as DIFF
+participant "Front-end f" as FE
+participant "Boundary Tap" as TAP
+participant "NPU backend (shared)" as BK
+participant "Reference Executor" as REF
+participant "Tolerance Model" as TOL
+
+loop for each front-end f in F
+  DIFF -> FE : run(m, x)
+  FE -> TAP : npu_model_load(nnc, W, residency)
+  TAP -> TAP : capture A1=nnc, A2=W-fp, A3=iomap
+  TAP -> BK : forward call (transparent)
+  FE -> TAP : execute(x)   [record mode: capture A4 op-outs]
+  TAP -> BK : forward
+  BK --> FE : y_f
+  FE --> DIFF : y_f + Trace_f
+end
+DIFF -> REF : y_ref = interpret(nnc_ref, W_ref, x)
+REF --> DIFF : y_ref
+DIFF -> TOL : bound(op-DAG, dtype)
+TOL --> DIFF : tau
+DIFF -> DIFF : check y_f ~=tau y_g and y_f ~=tau y_ref
+alt all equivalent
+  DIFF --> DIFF : PASS
+else violation
+  DIFF -> DIFF : Localize(m, x, f)  (see localizer diagram)
+end
+@enduml

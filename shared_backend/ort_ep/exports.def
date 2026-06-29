@@ -1,0 +1,4 @@
+LIBRARY "myaccel_ort_ep.dll"
+EXPORTS
+ CreateEpFactories @1
+ ReleaseEpFactory @2

@@ -1,0 +1,232 @@
+'==============================================================================
+' llama_integration.md — visualized (PlantUML)
+'
+' Render all:   plantuml shared_backend/docs/llama_integration.puml
+' Mirrors the Mermaid diagrams embedded in llama_integration.md.
+'==============================================================================
+
+'------------------------------------------------------------------------------
+' 1. Linking & loading — how llama-cli reaches ggml-myaccel.dll
+'------------------------------------------------------------------------------
+@startuml linking_overview
+title Linking & loading: implicit (build-time) vs explicit (run-time)
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+[llama-cli.exe] as EXE
+[ggml.dll] as GGML
+[ggml-base.dll] as BASE
+[ggml-myaccel.dll] as MY
+[myaccel_core.dll] as CORE
+[NPU SW stack / driver] as SDK
+
+EXE ..> GGML  : implicit link\n(import .lib at build,\nloaded by OS at startup)
+EXE ..> BASE  : implicit link
+EXE ..>  MY   : EXPLICIT load at RUNTIME\nggml_backend_load() ->\nLoadLibrary / dlopen (by path)
+MY  ..> BASE  : implicit link\n(OS resolves when MY is loaded\n=> must be co-located)
+MY  ..> CORE  : implicit link\n(MYACCEL_CORE_SHARED=ON\n=> co-located)
+CORE ..> SDK  : link / load NPU driver
+
+note bottom of EXE
+  The executable does NOT link the backend dll.
+  ggml backends are discovered & loaded at runtime,
+  so a new NPU build = drop in a dll, no host rebuild.
+end note
+
+note bottom of CORE
+  Separate DLL with MYACCEL_CORE_SHARED=ON.
+  Default (OFF): myaccel_core is a static .lib
+  compiled INTO each adapter (no separate dll).
+end note
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 2. Sequence — ggml_backend_load_all() loading the dll
+'------------------------------------------------------------------------------
+@startuml seq_backend_load_all
+title Inside ggml_backend_load_all()
+autonumber
+skinparam shadowing false
+
+actor User
+participant "llama-cli (main)" as APP
+participant "ggml_backend_load_all()" as LOADALL
+participant "OS loader" as OS
+participant "ggml-myaccel.dll" as DLL
+participant "ggml registry" as REG
+
+User -> APP : set GGML_BACKEND_PATH=...\\ggml-myaccel.dll ; run llama-cli
+APP -> LOADALL : ggml_backend_load_all()
+LOADALL -> LOADALL : scan built-in names (cuda/vulkan/cpu...)\n+ read env GGML_BACKEND_PATH
+LOADALL -> OS : ggml_backend_load(path) -> dl_load_library(path)
+note over OS : LoadLibraryW / dlopen\nOS resolves dependent ggml-base.dll
+OS --> LOADALL : module handle
+LOADALL -> OS : dl_get_sym("ggml_backend_init")
+OS --> LOADALL : function pointer
+LOADALL -> DLL : ggml_backend_init()
+DLL --> LOADALL : ggml_backend_reg
+LOADALL -> LOADALL : verify reg.api_version == GGML_BACKEND_API_VERSION
+LOADALL -> REG : register_backend(reg)  (adds devices)
+REG --> LOADALL : ok
+LOADALL --> APP : done
+APP -> REG : ggml_backend_dev_by_name("myaccel_npu")
+REG --> APP : device handle
+APP --> User : --list-devices shows myaccel_npu
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 3. Activity — choosing A (dynamic) vs B (in-tree)
+'------------------------------------------------------------------------------
+@startuml integration_choice
+title Two ways to use the backend
+skinparam shadowing false
+
+start
+:build ggml-myaccel.dll;
+if (ship as a plugin?) then (A: dynamic load)
+  :copy ggml-myaccel.dll next to ggml-base.dll;
+  :set GGML_BACKEND_PATH\n(or call ggml_backend_load in code);
+  :llama-cli --list-devices;
+  :run --device myaccel_npu -ngl N;
+else (B: in-tree)
+  :put source in ggml/src/ggml-myaccel/;
+  :ggml_add_backend(MyAccel) + CMakeLists;
+  :register_backend() in ggml-backend-reg.cpp;
+  :cmake -DGGML_MYACCEL=ON && rebuild llama;
+endif
+:device visible to ggml_backend_sched;
+stop
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 4. Sequence — placement is the scheduler's job, not the model file's
+'------------------------------------------------------------------------------
+@startuml models_placement
+title Backend placement: src/models/*.cpp is backend-agnostic
+autonumber
+skinparam shadowing false
+
+participant "src/models/<arch>.cpp\n(graph builder)" as MODEL
+participant "ggml_cgraph" as GRAPH
+participant "ggml_backend_sched" as SCHED
+participant "GgmlMyAccelAdapter" as AD
+participant "CPU backend" as CPU
+
+MODEL -> GRAPH : build op graph (no backend chosen)
+SCHED -> GRAPH : walk nodes
+loop each node
+  SCHED -> AD : supports_op(node)?
+  alt op supported
+    AD --> SCHED : true
+    SCHED -> AD : place on NPU
+  else not supported
+    AD --> SCHED : false
+    SCHED -> CPU : place on CPU (fallback)
+  end
+end
+note over MODEL : To run on the NPU you do NOT edit my_npu.cpp;\nyou register the backend + fill supports_op.
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 5. Linking & loading — onnxruntime + llama.cpp together (share myaccel_core.dll)
+'------------------------------------------------------------------------------
+@startuml linking_overview_both
+title Linking & loading: onnxruntime + llama.cpp (both share myaccel_core.dll)
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "onnxruntime path" {
+  [host app\n(uses onnxruntime)] as APPO
+  [onnxruntime.dll] as ORT
+  [myaccel_ort_ep.dll] as EP
+}
+package "llama.cpp path" {
+  [llama-cli.exe] as EXE
+  [ggml.dll] as GGML
+  [ggml-base.dll] as BASE
+  [ggml-myaccel.dll] as MY
+}
+[myaccel_core.dll] as CORE
+[NPU SW stack / driver] as SDK
+
+APPO ..> ORT  : implicit link\n(onnxruntime.lib at build,\nloaded at startup)
+ORT  ..> EP   : EXPLICIT runtime load\nRegisterExecutionProviderLibrary ->\nLoadLibrary + GetProcAddress("CreateEpFactories")
+EP   ..> CORE : implicit link (co-located)
+
+EXE  ..> GGML : implicit link
+EXE  ..> BASE : implicit link
+EXE  ..> MY   : EXPLICIT runtime load\nggml_backend_load ->\nLoadLibrary + dlsym("ggml_backend_init")
+MY   ..> BASE : implicit link (co-located)
+MY   ..> CORE : implicit link (co-located)
+
+CORE ..> SDK  : link / load NPU driver
+
+note bottom of EP
+  Neither adapter LINKS its framework.
+  The EP uses the OrtApi handed to CreateEpFactories;
+  ggml-myaccel uses ggml-base. Each is loaded at runtime
+  via a single entry symbol -> no host rebuild.
+end note
+
+note bottom of CORE
+  Separate DLL with MYACCEL_CORE_SHARED=ON, shared by
+  both adapters. Default (OFF): static-linked into each.
+end note
+@enduml
+
+
+'------------------------------------------------------------------------------
+' 6. Linking & loading — onnxruntime + llama.cpp + ExecuTorch (share myaccel_core)
+'------------------------------------------------------------------------------
+@startuml linking_overview_all
+title Linking & loading: 3 runtimes, one shared myaccel_core
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "onnxruntime path" {
+  [host app\n(uses onnxruntime)] as APPO
+  [onnxruntime.dll] as ORT
+  [myaccel_ort_ep.dll] as EP
+}
+package "llama.cpp path" {
+  [llama-cli.exe] as EXE
+  [ggml-base.dll] as BASE
+  [ggml-myaccel.dll] as MY
+}
+package "ExecuTorch path" {
+  [host app\n(uses ExecuTorch)] as APPE
+  [executorch runtime] as ETRT
+  [myaccel_backend.dll] as ETB
+}
+[myaccel_core.dll] as CORE
+[NPU SW stack / driver] as SDK
+
+APPO ..> ORT   : implicit link
+ORT  ..> EP    : EXPLICIT runtime load\nRegisterExecutionProviderLibrary ->\nGetProcAddress("CreateEpFactories")
+EP   ..> CORE  : implicit link (co-located)
+
+EXE  ..> BASE  : implicit link
+EXE  ..> MY    : EXPLICIT runtime load\nggml_backend_load ->\ndlsym("ggml_backend_init")
+MY   ..> BASE  : implicit link (co-located)
+MY   ..> CORE  : implicit link (co-located)
+
+APPE ..> ETRT  : implicit link
+ETRT ..> ETB   : register_backend("MyAccelBackend")\n(static init on load, or\nmyaccel_backend_register())
+ETB  ..> CORE  : implicit link (co-located)
+
+CORE ..> SDK   : link / load NPU driver
+
+note bottom of CORE
+  Separate DLL with MYACCEL_CORE_SHARED=ON, shared by all three
+  adapters. Default (OFF): static-linked into each adapter.
+end note
+
+note bottom of ETB
+  myaccel_backend.dll references myaccel_core.dll
+  (the same core the EP and ggml adapters use).
+end note
+@enduml
