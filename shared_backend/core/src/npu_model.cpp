@@ -6,6 +6,7 @@
 // to the NPU. Replace the marked sections with your NPU SW stack calls.
 
 #include "myaccel/npu.h"
+#include "trace.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -104,6 +105,7 @@ const char* npu_last_error(void) { return g_last_error.c_str(); }
 npu_status_t npu_model_compile(npu_device_t* /*device*/, const npu_blob_t* nnc,
                                uint32_t n_options, const char* const* keys,
                                const char* const* values, npu_model_t** out_model) {
+  MYACCEL_TRACE_FUNC();
   if (nnc == nullptr || out_model == nullptr) return NPU_ERR_INVALID_ARGUMENT;
 
   nlohmann::json options;
@@ -127,6 +129,7 @@ npu_status_t npu_model_compile(npu_device_t* /*device*/, const npu_blob_t* nnc,
 npu_status_t npu_model_bind_weights(npu_model_t* model, const npu_blob_t* weights,
                                     const npu_weight_manifest_t* /*manifest*/,
                                     npu_weight_residency_t residency) {
+  MYACCEL_TRACE_FUNC();
   if (model == nullptr || weights == nullptr) return NPU_ERR_INVALID_ARGUMENT;
 
   if (residency == NPU_WEIGHTS_REFERENCE_HOST && weights->kind == NPU_SOURCE_MEMORY) {
@@ -144,6 +147,7 @@ npu_status_t npu_model_bind_weights(npu_model_t* model, const npu_blob_t* weight
 
 npu_status_t npu_model_load(npu_device_t* device, const npu_model_load_info_t* info,
                             npu_model_t** out_model) {
+  MYACCEL_TRACE_FUNC();
   if (info == nullptr || out_model == nullptr) return NPU_ERR_INVALID_ARGUMENT;
   if (info->struct_size != sizeof(npu_model_load_info_t) || info->api_version != NPU_API_VERSION) {
     set_error("npu_model_load_info_t struct_size/api_version mismatch");

@@ -4,6 +4,7 @@
 // adapters can be validated on CPU. Replace each TODO with your NPU SDK call.
 
 #include "myaccel/npu.h"
+#include "trace.h"
 
 #include <atomic>
 #include <cstdio>
@@ -29,6 +30,7 @@ const char* npu_version_string(void) { return NPU_VERSION_STRING; }
 
 // --- lifetime --------------------------------------------------------------
 npu_status_t npu_initialize(void) {
+  MYACCEL_TRACE_FUNC();
   g_init_refcount.fetch_add(1, std::memory_order_acq_rel);
   // TODO: npuInit() / driver open.
   return NPU_OK;
@@ -47,6 +49,7 @@ int32_t npu_get_device_count(void) {
 }
 
 npu_status_t npu_get_device_info(int32_t device_id, npu_device_info_t* out_info) {
+  MYACCEL_TRACE_FUNC();
   if (out_info == nullptr || device_id < 0 || device_id >= npu_get_device_count()) {
     return NPU_ERR_INVALID_ARGUMENT;
   }
@@ -58,6 +61,7 @@ npu_status_t npu_get_device_info(int32_t device_id, npu_device_info_t* out_info)
 }
 
 npu_device_t* npu_open_device(int32_t device_id) {
+  MYACCEL_TRACE_FUNC();
   if (device_id < 0 || device_id >= npu_get_device_count()) return nullptr;
   auto* d = new (std::nothrow) npu_device();
   if (d != nullptr) d->id = device_id;
@@ -66,12 +70,14 @@ npu_device_t* npu_open_device(int32_t device_id) {
 }
 
 void npu_close_device(npu_device_t* device) {
+  MYACCEL_TRACE_FUNC();
   // TODO: npuCloseDevice(device).
   delete device;
 }
 
 // --- memory ----------------------------------------------------------------
 npu_buffer_t* npu_alloc(npu_device_t* /*device*/, size_t bytes) {
+  MYACCEL_TRACE_FUNC();
   auto* b = new (std::nothrow) npu_buffer();
   if (b == nullptr) return nullptr;
   // TODO: npuMalloc(device, bytes). Stub uses host memory.
@@ -85,6 +91,7 @@ npu_buffer_t* npu_alloc(npu_device_t* /*device*/, size_t bytes) {
 }
 
 void npu_free(npu_buffer_t* buffer) {
+  MYACCEL_TRACE_FUNC();
   if (buffer == nullptr) return;
   // TODO: npuFree(buffer).
   std::free(buffer->host_ptr);
@@ -95,6 +102,7 @@ void* npu_device_ptr(npu_buffer_t* buffer) { return buffer ? buffer->host_ptr : 
 
 npu_status_t npu_copy(npu_device_t* /*device*/, void* dst, const void* src, size_t bytes,
                       npu_copy_kind_t /*kind*/) {
+  MYACCEL_TRACE_FUNC();
   if (dst == nullptr || src == nullptr) return NPU_ERR_INVALID_ARGUMENT;
   // TODO: npuMemcpy with the right direction. Stub is a host memcpy for all kinds.
   std::memcpy(dst, src, bytes);
@@ -115,6 +123,7 @@ void npu_destroy_stream(npu_stream_t* stream) {
 }
 
 npu_status_t npu_synchronize(npu_stream_t* /*stream*/) {
+  MYACCEL_TRACE_FUNC();
   // TODO: npuStreamSynchronize / npuDeviceSynchronize.
   return NPU_OK;
 }
@@ -123,6 +132,7 @@ npu_status_t npu_synchronize(npu_stream_t* /*stream*/) {
 npu_status_t npu_matmul_f32(npu_device_t* /*device*/, npu_stream_t* /*stream*/,
                             const void* a, const void* b, void* out,
                             int64_t m, int64_t k, int64_t n) {
+  MYACCEL_TRACE_FUNC();
   if (a == nullptr || b == nullptr || out == nullptr) return NPU_ERR_INVALID_ARGUMENT;
   // TODO: dispatch to the NPU GEMM. Stub is a naive CPU reference so the adapters
   // can be validated for correctness before the kernel exists.

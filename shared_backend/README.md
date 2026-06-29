@@ -98,6 +98,7 @@ cmake -S . -B build -DMYACCEL_BUILD_EXECUTORCH=ON -DEXECUTORCH_DIR=C:\path\to\ex
 | `MYACCEL_BUILD_GGML` | `ON` | Build the llama.cpp adapter. |
 | `MYACCEL_BUILD_EXECUTORCH` | `OFF` | Build the ExecuTorch adapter (`myaccel_backend`). |
 | `MYACCEL_CORE_SHARED` | `OFF` | Build the core as its own DLL instead of static. |
+| `MYACCEL_TRACE` | `off` | Function-level profiling backend: `off` / `chrome` (built-in JSON) / `perfetto` (Windows-capable). See [`docs/profiling_perfetto.md`](docs/profiling_perfetto.md). |
 
 Build just one adapter by turning the others `OFF` (e.g. `-DMYACCEL_BUILD_GGML=OFF`).
 

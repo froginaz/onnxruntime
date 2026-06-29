@@ -69,6 +69,16 @@ typedef enum npu_status {
 NPU_API const char* npu_status_str(npu_status_t status);  /* never NULL */
 NPU_API const char* npu_last_error(void);                 /* thread-local detail */
 
+/* --------------------------------------------------------------------------
+ * Tracing / profiling (optional). Function-level elapsed-time slices are emitted
+ * by the core when built with -DMYACCEL_TRACE=chrome (built-in JSON, no deps) or
+ * -DMYACCEL_TRACE=perfetto (Perfetto SDK). Start a session, run inference, stop:
+ * the result opens in https://ui.perfetto.dev . No-ops when tracing is off.
+ *   output_path: ".json" (chrome) or ".perfetto-trace" (perfetto).
+ * ------------------------------------------------------------------------ */
+NPU_API void npu_trace_start(const char* output_path);
+NPU_API void npu_trace_stop(void);
+
 /* ==========================================================================
  * Opaque handles (owned by the core; never dereferenced by callers)
  * ======================================================================== */

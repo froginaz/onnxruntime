@@ -32,7 +32,8 @@ option(MYACCEL_CORE_SHARED  "Build the NPU core as a shared library"   OFF)
 # --- shared, framework-agnostic core --------------------------------------
 set(MYACCEL_CORE_SOURCES
     core/src/npu_device.cpp   # device / memory / kernels (unified C ABI, npu.h)
-    core/src/npu_model.cpp)   # model loading (unified C ABI, npu.h)
+    core/src/npu_model.cpp    # model loading (unified C ABI, npu.h)
+    core/src/trace.cpp)       # npu_trace_start/stop + selected tracing backend
 
 if(MYACCEL_CORE_SHARED)
     add_library(myaccel_core SHARED ${MYACCEL_CORE_SOURCES})
@@ -67,6 +68,40 @@ target_include_directories(myaccel_core PUBLIC core/include)
 # never exposed through npu_model.h / npu_core.h, so it does not leak into the
 # adapters or the DLL export surface. Header-only => compiled into myaccel_core.
 target_include_directories(myaccel_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+
+# --- function-level tracing / profiling (optional) -------------------------
+# off (default) = zero overhead, no dependency. chrome = built-in Chrome Trace
+# JSON (no deps; opens in chrome://tracing and ui.perfetto.dev). perfetto =
+# Perfetto Tracing SDK (.perfetto-trace). Works on Windows/Linux/macOS.
+set(MYACCEL_TRACE "off" CACHE STRING "Tracing backend: off | chrome | perfetto")
+set_property(CACHE MYACCEL_TRACE PROPERTY STRINGS off chrome perfetto)
+if(MYACCEL_TRACE STREQUAL "chrome")
+    target_compile_definitions(myaccel_core PRIVATE MYACCEL_TRACE_CHROME)
+    message(STATUS "myaccel_core: tracing = chrome (built-in JSON)")
+elseif(MYACCEL_TRACE STREQUAL "perfetto")
+    target_compile_definitions(myaccel_core PRIVATE MYACCEL_TRACE_PERFETTO)
+    # Perfetto SDK amalgamation (perfetto.h + perfetto.cc), cross-platform incl.
+    # Windows/MSVC. Point -DPERFETTO_SDK_DIR=<sdk> at a checkout, or let CMake fetch it.
+    if(NOT DEFINED PERFETTO_SDK_DIR)
+        include(FetchContent)
+        FetchContent_Declare(perfetto
+            GIT_REPOSITORY https://github.com/google/perfetto.git
+            GIT_TAG v46.0)
+        FetchContent_MakeAvailable(perfetto)
+        set(PERFETTO_SDK_DIR "${perfetto_SOURCE_DIR}/sdk")
+    endif()
+    target_sources(myaccel_core PRIVATE "${PERFETTO_SDK_DIR}/perfetto.cc")
+    target_include_directories(myaccel_core PRIVATE "${PERFETTO_SDK_DIR}")
+    if(WIN32)
+        target_link_libraries(myaccel_core PRIVATE ws2_32)  # Perfetto uses winsock
+    else()
+        find_package(Threads REQUIRED)
+        target_link_libraries(myaccel_core PRIVATE Threads::Threads)
+    endif()
+    message(STATUS "myaccel_core: tracing = perfetto (SDK ${PERFETTO_SDK_DIR})")
+else()
+    message(STATUS "myaccel_core: tracing = off")
+endif()
 
 # Link your NPU SDK here, e.g.:
 #   target_include_directories(myaccel_core PRIVATE "${MYNPU_SDK}/include")

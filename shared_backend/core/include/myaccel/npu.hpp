@@ -63,6 +63,19 @@ inline Status  MatMulF32(Device* d, Stream* s, const void* a, const void* b, voi
   return npu_matmul_f32(d, s, a, b, out, m, k, n);
 }
 
+// --- tracing / profiling ---------------------------------------------------
+inline void TraceStart(const char* output_path) { npu_trace_start(output_path); }
+inline void TraceStop()                          { npu_trace_stop(); }
+
+// RAII trace session: start on construction, stop+flush on destruction.
+//   { myaccel::npu::TraceSession ts("run.json"); /* inference */ }
+struct TraceSession {
+  explicit TraceSession(const char* output_path) { npu_trace_start(output_path); }
+  ~TraceSession() { npu_trace_stop(); }
+  TraceSession(const TraceSession&) = delete;
+  TraceSession& operator=(const TraceSession&) = delete;
+};
+
 }  // namespace npu
 }  // namespace myaccel
 
