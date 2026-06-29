@@ -103,7 +103,8 @@ ergonomics. (Analogy: the CUDA *Driver API* is C — a stable external boundary 
 while a project's internal C++ helpers around it are C++.)
 
 See [`npu_model_api.md`](npu_model_api.md) and [`npu_api.md`](npu_api.md) for the
-per-API usage.
+per-API usage, and [`examples/abi/`](examples/abi/) for runnable proof (real
+compiler output) of the mangling / STL-ABI-break / struct-layout hazards.
 
 ---
 
