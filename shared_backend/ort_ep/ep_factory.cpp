@@ -3,7 +3,7 @@
 #include "ep_factory.h"
 
 #include "ep.h"
-#include "myaccel/npu_api.h"  // sole NPU access point (myaccel::npu)
+#include "myaccel/npu.hpp"  // sole NPU access point (myaccel::npu)
 
 const char* MyAccelEpFactory::myaccel_vendor_name() { return myaccel::npu::kVendorName; }
 

@@ -3,7 +3,7 @@
 //
 // Point: a C++ symbol name is mangled (compiler-specific); an extern "C" symbol
 // keeps its plain name. That is why a stable cross-compiler / cross-language
-// boundary (npu_model.h) is extern "C".
+// boundary (npu.h) is extern "C".
 
 #include <string>
 

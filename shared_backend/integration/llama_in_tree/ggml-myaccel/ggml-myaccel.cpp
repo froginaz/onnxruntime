@@ -22,7 +22,7 @@
 #include <cstring>
 #include <vector>
 
-#include "myaccel/npu_api.h"  // sole NPU access point (myaccel::npu); from shared_backend headers
+#include "myaccel/npu.hpp"  // sole NPU access point (myaccel::npu); from shared_backend headers
 
 // ---------------------------------------------------------------------------
 // Buffer

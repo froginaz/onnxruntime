@@ -14,7 +14,7 @@
 
 #include <executorch/runtime/backend/interface.h>
 
-#include "myaccel/npu_api.h"  // sole NPU access point (myaccel::npu + npu_model C ABI)
+#include "myaccel/npu.hpp"  // sole NPU access point (myaccel::npu + npu_model C ABI)
 
 namespace {
 

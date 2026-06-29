@@ -38,13 +38,19 @@ core + one thin adapter per runtime (onnxruntime, llama.cpp, ExecuTorch).
 | `ggml_backend/` | llama.cpp ggml backend adapter (-> `ggml-myaccel.dll`) — using it from llama.cpp: [`docs/llama_integration.md`](docs/llama_integration.md). |
 | `executorch/` | ExecuTorch backend adapter (-> `myaccel_backend.dll`), references `myaccel_core`. Guide: [`docs/executorch_integration.md`](docs/executorch_integration.md). Opt-in: `-DMYACCEL_BUILD_EXECUTORCH=ON -DEXECUTORCH_DIR=...`. |
 
-Public NPU access — the adapters include only these:
-- `npu_api.h` — **public façade** (namespace `myaccel::npu`) for device/memory/kernels. The single NPU access point for every adapter.
-- `npu_model.h` — **pure C ABI** for loading `model.nnc` + `weight.bin` onto the NPU. The stable runtime↔NPU boundary; it knows nothing about onnx/gguf.
+Public NPU access — **one unified C ABI** plus an optional C++ wrapper:
+- `npu.h` — the **unified pure C ABI**: identity, device, memory, streams, kernels,
+  and model loading (`model.nnc` + `weight.bin`). Language-neutral (any FFI),
+  ABI-stable, opaque handles + `struct_size`/`api_version`. The single stable
+  runtime↔NPU boundary; it knows nothing about onnx/gguf.
+- `npu.hpp` — an **optional header-only C++ wrapper** (`namespace myaccel::npu`)
+  over `npu.h`. Ergonomics (`enum class`, typed handles) with **zero ABI cost**
+  (every function is `inline`, never part of the exported ABI). Adapters include
+  `npu.hpp`; FFI / other languages / other compilers use `npu.h` directly.
 
-Internal (under `core/internal/`, a PRIVATE include not on the adapters' path; wrapped by `npu_api.h` and hidden from the DLL exports):
-- `npu_core.h` — device, compute, streams, kernels (raw SDK calls).
-- `npu_memory.h` — device allocation and host↔device copies.
+> Why one C ABI + an inline wrapper (not two different headers): see
+> [`docs/design.md`](docs/design.md) §2 and the runnable proof in
+> [`docs/examples/abi/`](docs/examples/abi/).
 
 ## Build on Windows (CMake)
 

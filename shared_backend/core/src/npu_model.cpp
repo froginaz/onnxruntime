@@ -5,7 +5,7 @@
 // and reads the blobs through every source kind, but does NOT actually compile
 // to the NPU. Replace the marked sections with your NPU SW stack calls.
 
-#include "myaccel/npu_model.h"
+#include "myaccel/npu.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -94,6 +94,7 @@ const char* npu_status_str(npu_status_t status) {
     case NPU_ERR_OUT_OF_MEMORY: return "NPU_ERR_OUT_OF_MEMORY";
     case NPU_ERR_IO: return "NPU_ERR_IO";
     case NPU_ERR_DEVICE: return "NPU_ERR_DEVICE";
+    case NPU_ERR_NOT_IMPLEMENTED: return "NPU_ERR_NOT_IMPLEMENTED";
   }
   return "NPU_ERR_UNKNOWN";
 }

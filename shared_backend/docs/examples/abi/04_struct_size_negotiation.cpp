@@ -4,7 +4,7 @@
 // Point: put `struct_size` (+ api_version) at the front of an extensible POD.
 // A library built with the new struct can detect an old caller (smaller
 // struct_size) and default the new fields -> forward/backward compatibility.
-// This is exactly the npu_model_load_info_t pattern in npu_model.h.
+// This is exactly the npu_model_load_info_t pattern in npu.h.
 
 #include <cstdio>
 #include <cstdint>

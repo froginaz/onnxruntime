@@ -4,7 +4,7 @@
 // hidden via exports.def / the version script.
 
 #include "ep_factory.h"
-#include "myaccel/npu_api.h"  // sole NPU access point (myaccel::npu)
+#include "myaccel/npu.hpp"  // sole NPU access point (myaccel::npu)
 
 #ifdef __APPLE__
 #define EXPORT_SYMBOL __attribute__((visibility("default")))

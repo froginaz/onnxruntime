@@ -54,53 +54,43 @@ into the NPU's own `{model.nnc, weight.bin}` and calls the same C ABI.
 | Layer | Module | Knows about | Stable? |
 |---|---|---|---|
 | Front-end | onnxruntime, llama.cpp, … | the model container (.onnx/.gguf) | n/a (external) |
-| **Adapter** | `ort_ep/`, `ggml_backend/` | *one* framework ABI **and** the NPU C ABI | follows framework |
-| **NPU model ABI** | `core/include/myaccel/npu_model.h` | `model.nnc` + `weight.bin` only | **pure C, versioned** |
-| **NPU public façade** | `core/include/myaccel/npu_api.h` (`myaccel::npu`) | device/memory/kernels | exported C++ |
-| **NPU internals** | `core/internal/myaccel/npu_core.h`, `npu_memory.h` | raw SDK calls | hidden, wrapped |
+| **Adapter** | `ort_ep/`, `ggml_backend/`, `executorch/` | *one* framework ABI **and** the NPU C ABI | follows framework |
+| **NPU public C ABI** | `core/include/myaccel/npu.h` | identity/device/memory/kernels + `model.nnc`+`weight.bin` | **pure C, versioned** |
+| **C++ wrapper (optional)** | `core/include/myaccel/npu.hpp` (`myaccel::npu`) | same, header-only inline | not part of ABI |
 | HW | NPU SW stack / driver | silicon | vendor |
 
-The public surface vs internals:
-- `npu_api.h` — the **public façade** (namespace `myaccel::npu`) every adapter
-  calls for device/memory/kernels. The **single NPU access point**.
-- `npu_model.h` — the **public, stable C ABI** for model loading.
-- `npu_core.h` / `npu_memory.h` — **internal** (under `core/internal/`, a PRIVATE
-  include not on the adapters' path); wrapped by `npu_api.h` and hidden from the
-  DLL export surface.
+The public surface is **one unified C ABI** plus an **optional, zero-ABI C++
+wrapper**:
+- `npu.h` — the **single stable C ABI** every boundary crosses (identity, device,
+  memory, streams, kernels, model loading). Language-neutral, version-negotiated.
+- `npu.hpp` — a header-only `inline` C++ wrapper (`myaccel::npu`) for ergonomics;
+  it forwards 1:1 to `npu.h` and is **never exported** (not part of the ABI).
+  Adapters include `npu.hpp`; FFI / other languages / other compilers use `npu.h`.
 
-### Why `npu_model.h` is a C ABI but `npu_api.h` is C++
+### Why the boundary is a C ABI (and the C++ wrapper is just sugar)
 
-Both are public headers of `myaccel_core`, but they cross **different kinds of
-boundary**, so their stability requirements differ.
+The public boundary is consumed by **separately-built hosts and potentially other
+languages**, and carries **version-sensitive POD structs** (`npu_model_load_info_t`,
+`npu_blob_t`, manifest). Such a boundary must be **C**:
 
-| | `npu_model.h` | `npu_api.h` |
-|---|---|---|
-| Form | **pure C ABI** | C++ (`namespace myaccel::npu`) |
-| Role | the NPU stack's **canonical model-loading contract** (the GAIA "narrow waist") | a **C++ convenience façade** for *this* repo's adapters |
-| What crosses it | version-sensitive **POD structs** (`npu_model_load_info_t`, `npu_blob_t`, manifest) | opaque pointers + scalars only |
-| Consumers | potentially **other languages / runtimes / separately-built hosts** (Python, Rust, prebuilt) | the C++ adapters (ORT/ggml/ExecuTorch), built with the **same toolchain** as the core |
-| Stability need | highest — `struct_size` + `api_version` negotiation | ordinary — intra-build |
+1. **Language neutrality** — C symbols are unmangled (`npu_model_load`,
+   `npu_alloc`, …), so any FFI (Python/Rust/Go) binds them; a C++ surface exposes
+   compiler-specific mangled names.
+2. **ABI stability** — the C++ ABI breaks across compilers/STL versions (mangling,
+   `std::string`/`std::vector` layout, exceptions/RTTI). C POD structs + opaque
+   handles keep a **fixed binary layout** across toolchains. (Runnable proof:
+   [`examples/abi/`](examples/abi/).)
+3. **Versioned evolution** — `struct_size` + `api_version` let an older host load
+   a newer stack and vice versa.
+4. **Layout *is* the contract** — `npu_blob_t` (a union) and the manifest need a
+   documented binary layout, i.e. C PODs.
 
-`npu_model.h` is **C** because model loading is the most external, most
-data-heavy, most version-sensitive boundary:
-
-1. **Language neutrality** — C symbols are unmangled (`npu_model_load`), so any
-   FFI (Python/Rust/Go) can bind them; a C++ surface would expose mangled names.
-2. **ABI stability** — the C++ ABI breaks across compilers/STL versions
-   (mangling, `std::string`/`std::vector` layout, exceptions/RTTI). C POD structs
-   + opaque handles keep a **fixed binary layout** across toolchains.
-3. **Versioned evolution** — `struct_size` + `api_version` let an older host
-   safely load a newer stack and vice versa — only meaningful for structs that
-   cross a C boundary.
-4. **Layout *is* the contract** — `npu_blob_t` (a union), the weight manifest,
-   etc. need a documented binary layout, i.e. C PODs.
-
-`npu_api.h` is **C++** because its only consumers are the in-repo adapters,
-compiled together with the core by the **same compiler**: there is no
-cross-toolchain or cross-language boundary to protect, the calls pass only opaque
-pointers and scalars, and C++ buys type safety (`enum class`), namespaces, and
-ergonomics. (Analogy: the CUDA *Driver API* is C — a stable external boundary —
-while a project's internal C++ helpers around it are C++.)
+The **C++ wrapper (`npu.hpp`) gives ergonomics for free**: because every function
+is `inline`, the C++ types never cross a binary boundary (they compile into the
+caller), so there is no ABI risk — yet adapters still get `enum class`,
+namespaces, and typed handles. This is the ONNX Runtime pattern
+(`onnxruntime_c_api.h` + `onnxruntime_cxx_api.h`) and the CUDA Driver-API pattern
+(stable C + thin C++ on top).
 
 See [`npu_model_api.md`](npu_model_api.md) and [`npu_api.md`](npu_api.md) for the
 per-API usage, and [`examples/abi/`](examples/abi/) for runnable proof (real

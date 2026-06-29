@@ -11,7 +11,7 @@
 #include <string>
 
 #include "ep_common.h"
-#include "myaccel/npu_api.h"  // sole NPU access point (myaccel::npu)
+#include "myaccel/npu.hpp"  // sole NPU access point (myaccel::npu)
 
 class ExampleEpFactory;
 
